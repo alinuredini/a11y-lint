@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { basename, join } from 'node:path';
 import { walk, type IRDocument, type IRElement } from '../ir.js';
 import { classes, isAriaHidden } from '../rules/helpers.js';
 import type { Finding } from '../types.js';
@@ -17,8 +18,66 @@ export function usesTailwind(cwd: string): boolean {
   return Boolean(pkg.dependencies?.tailwindcss ?? pkg.devDependencies?.tailwindcss);
 }
 
-/** Tailwind v4's default palette (`--color-red-500: oklch(...)`), from the project's install. */
-export function tailwindTheme(cwd: string): Stylesheet | undefined {
+const V3_CONFIGS = ['tailwind.config.ts', 'tailwind.config.mts', 'tailwind.config.cts', 'tailwind.config.js', 'tailwind.config.mjs', 'tailwind.config.cjs'];
+
+/**
+ * The project's Tailwind colours as `--color-*` variables: v3 from `tailwind.config.*`,
+ * v4 from the installed `tailwindcss/theme.css` (the project's own `@theme` blocks are read with its CSS).
+ */
+export async function tailwindTheme(cwd: string): Promise<Stylesheet | undefined> {
+  const require = createRequire(join(cwd, 'package.json'));
+  const config = V3_CONFIGS.map((f) => join(cwd, f)).find(existsSync);
+  if (config && tailwindMajor(cwd, require) !== 4) return tailwindV3Theme(config, require);
+  return tailwindV4Theme(cwd);
+}
+
+/** Major version from the project's declared range (`^3.4.0`), else from the installed package. */
+function tailwindMajor(cwd: string, require: NodeJS.Require): number | undefined {
+  const pkg = JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf8'));
+  const range: string | undefined = pkg.dependencies?.tailwindcss ?? pkg.devDependencies?.tailwindcss;
+  const declared = range && /(\d+)/.exec(range);
+  if (declared) return Number(declared[1]);
+  try {
+    return Number(JSON.parse(readFileSync(require.resolve('tailwindcss/package.json'), 'utf8')).version.split('.')[0]);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Runs the project's tailwind.config like Tailwind itself does, then flattens `theme.colors`. */
+async function tailwindV3Theme(configFile: string, require: NodeJS.Require): Promise<Stylesheet | undefined> {
+  let config: Record<string, any>;
+  try {
+    const mod = await import(pathToFileURL(configFile).href);
+    config = mod.default ?? mod;
+  } catch {
+    return undefined; // e.g. a TypeScript config on a Node without type stripping
+  }
+  let colors: Record<string, unknown> = { white: '#ffffff', black: '#000000', transparent: 'transparent' };
+  try {
+    const resolveConfig = require('tailwindcss/resolveConfig');
+    const theme = (resolveConfig.default ?? resolveConfig)(config).theme;
+    colors = { ...colors, ...theme.colors, ...theme.textColor, ...theme.backgroundColor };
+  } catch {
+    // tailwindcss not installed: only the colours the config spells out
+    const theme = config.theme ?? {};
+    const resolved = (v: unknown) => (typeof v === 'function' ? {} : (v ?? {}));
+    colors = { ...colors, ...resolved(theme.colors), ...resolved(theme.extend?.colors), ...resolved(theme.extend?.textColor), ...resolved(theme.extend?.backgroundColor) };
+  }
+  const decls: string[] = [];
+  const flatten = (prefix: string, value: unknown) => {
+    if (typeof value === 'function') value = value({ opacityValue: '1', opacityVariable: '' });
+    if (typeof value === 'string') {
+      decls.push(`  --color-${prefix}: ${value.replace(/<alpha-value>/g, '1')};`);
+    } else if (value && typeof value === 'object') {
+      for (const [k, v] of Object.entries(value)) flatten(k === 'DEFAULT' ? prefix : `${prefix}-${k}`, v);
+    }
+  };
+  for (const [name, value] of Object.entries(colors)) flatten(name, value);
+  return { file: basename(configFile), css: `:root {\n${decls.join('\n')}\n}`, lang: 'css' };
+}
+
+function tailwindV4Theme(cwd: string): Stylesheet | undefined {
   for (const base of [join(cwd, 'package.json'), import.meta.url]) {
     try {
       const file = createRequire(base).resolve('tailwindcss/theme.css');

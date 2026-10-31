@@ -20,7 +20,7 @@ export interface RunResult {
 
 export async function run(cwd: string, config: Config, options: RunOptions = {}): Promise<RunResult> {
   const result = await lintStatic(cwd, config, options.paths);
-  const contrast = checkContrast(cwd, config, result);
+  const contrast = await checkContrast(cwd, config, result);
   const findings = [...result.findings, ...contrast.findings];
   const covered = new Set([...STATIC_CRITERIA, ...contrast.covered]);
   let pages: string[] = [];

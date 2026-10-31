@@ -61,7 +61,7 @@ describe('stylesheets and Tailwind', () => {
   it('checks CSS rules per theme, focus outlines, and Tailwind classes', async () => {
     const config: Config = { ...DEFAULT_CONFIG, level: 'AA' };
     const result = await lintStatic(fixtures, config, ['theme.css', 'vue/Card.vue']);
-    const found = checkContrast(fixtures, config, result).findings.map((f) => `${f.file}:${f.line} ${f.ruleId}`);
+    const found = (await checkContrast(fixtures, config, result)).findings.map((f) => `${f.file}:${f.line} ${f.ruleId}`);
     expect(found).toEqual(
       expect.arrayContaining([
         'theme.css:9 color-contrast', // .banner in the dark theme
@@ -79,14 +79,14 @@ describe('stylesheets and Tailwind', () => {
   it('keeps variables from docs/ prototypes out of the app', async () => {
     const config: Config = { ...DEFAULT_CONFIG, level: 'AA' };
     const result = await lintStatic(fixtures, config, ['theme.css', 'docs/proto.css']);
-    const msgs = checkContrast(fixtures, config, result).findings.map((f) => f.message);
+    const msgs = (await checkContrast(fixtures, config, result)).findings.map((f) => f.message);
     expect(msgs.some((m) => m.includes('light'))).toBe(false);
   });
 
   it('checks dark: variants without a CSS dark theme', async () => {
     const config: Config = { ...DEFAULT_CONFIG, level: 'AA' };
     const result = await lintStatic(fixtures, config, ['jsx/Dark.tsx']);
-    const msgs = checkContrast(fixtures, config, result).findings.map((f) => f.message);
+    const msgs = (await checkContrast(fixtures, config, result)).findings.map((f) => f.message);
     expect(msgs).toHaveLength(1);
     expect(msgs[0]).toContain('(dark)');
   });
@@ -95,7 +95,18 @@ describe('stylesheets and Tailwind', () => {
     const aa: Config = { ...DEFAULT_CONFIG, level: 'AA' };
     const aaa: Config = { ...DEFAULT_CONFIG, level: 'AAA' };
     const result = await lintStatic(fixtures, aa, ['theme.css']);
-    expect(checkContrast(fixtures, aa, result).findings.some((f) => f.ruleId === 'reduced-motion')).toBe(false);
-    expect(checkContrast(fixtures, aaa, result).findings.some((f) => f.ruleId === 'reduced-motion')).toBe(true);
+    expect((await checkContrast(fixtures, aa, result)).findings.some((f) => f.ruleId === 'reduced-motion')).toBe(false);
+    expect((await checkContrast(fixtures, aaa, result)).findings.some((f) => f.ruleId === 'reduced-motion')).toBe(true);
+  });
+});
+
+describe('Tailwind v3 config', () => {
+  it('reads colours from tailwind.config.js, including DEFAULT and <alpha-value>', async () => {
+    const cwd = resolve(import.meta.dirname, 'fixtures/tw3');
+    const config: Config = { ...DEFAULT_CONFIG, level: 'AA' };
+    const result = await lintStatic(cwd, config);
+    const found = (await checkContrast(cwd, config, result)).findings.map((f) => `${f.line} ${f.message}`);
+    // tailwindcss v3 isn't installed here, so only the config's own colours (plus white/black) resolve.
+    expect(found).toEqual(['3 <p class="bg-brand text-brand-fg">: 1.67:1, needs 4.5:1.']);
   });
 });

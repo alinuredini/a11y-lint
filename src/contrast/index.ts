@@ -36,12 +36,12 @@ function scopeKey(cwd: string, file: string): string {
  * Design-token, stylesheet and Tailwind contrast plus CSS focus/motion checks.
  * `covered` lists only criteria for which at least one pair or rule was evaluated.
  */
-export function checkContrast(cwd: string, config: Config, result: StaticResult): { findings: Finding[]; covered: Set<string> } {
+export async function checkContrast(cwd: string, config: Config, result: StaticResult): Promise<{ findings: Finding[]; covered: Set<string> }> {
   const sheets: Stylesheet[] = [
     ...result.stylesheets,
     ...result.docs.flatMap((d) => d.styles.map((s) => ({ file: d.file, css: s.css, lang: s.lang, line: s.line }))),
   ];
-  const twTheme = usesTailwind(cwd) ? tailwindTheme(cwd) : undefined;
+  const twTheme = usesTailwind(cwd) ? await tailwindTheme(cwd) : undefined;
   const target = config.level;
   const { tokens, pairs, autoPair } = config.contrast;
   const covered = new Set<string>(target === 'AAA' ? ['2.3.3'] : []);
