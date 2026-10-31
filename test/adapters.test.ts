@@ -29,3 +29,19 @@ describe('runtime content and names per framework', () => {
     expect(accessibleName(first(doc, 'button'))).toBe('yes');
   });
 });
+
+describe('Angular inline templates', () => {
+  it('lints template: strings and styles in .component.ts with real positions', async () => {
+    const { lintStatic } = await import('../src/engine.js');
+    const { checkContrast } = await import('../src/contrast/index.js');
+    const { DEFAULT_CONFIG } = await import('../src/config.js');
+    const { resolve } = await import('node:path');
+    const cwd = resolve(import.meta.dirname, 'fixtures');
+    const result = await lintStatic(cwd, DEFAULT_CONFIG, ['angular/inline.component.ts']);
+    expect(result.errors).toEqual([]);
+    const found = result.findings.map((f) => `${f.line}:${f.column} ${f.ruleId}`);
+    expect(found).toEqual(['6:14 image-alt', '7:5 button-name', '9:7 click-needs-keyboard', '9:7 click-needs-role']);
+    const css = (await checkContrast(cwd, DEFAULT_CONFIG, result)).findings.map((f) => `${f.line} ${f.ruleId}`);
+    expect(css).toContain('12 focus-outline-removed');
+  });
+});

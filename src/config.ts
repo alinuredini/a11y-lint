@@ -36,7 +36,7 @@ export interface Config {
 
 export const DEFAULT_CONFIG: Config = {
   level: 'AA',
-  include: ['**/*.{html,htm,jsx,tsx,vue,svelte,astro,css,scss}'],
+  include: ['**/*.{html,htm,jsx,tsx,vue,svelte,astro,css,scss}', '**/*.component.ts'],
   exclude: [
     '**/node_modules/**',
     '**/dist/**',
