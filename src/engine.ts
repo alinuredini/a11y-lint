@@ -4,6 +4,7 @@ import { glob } from 'tinyglobby';
 import { adapterFor } from './adapters/index.js';
 import type { Config } from './config.js';
 import { DYNAMIC, walk, type IRDocument } from './ir.js';
+import { ImportResolver } from './resolve.js';
 import { rules } from './rules/index.js';
 import type { Finding, RuleContext } from './types.js';
 import { inScope, levelOf } from './wcag.js';
@@ -30,6 +31,7 @@ export async function lintStatic(cwd: string, config: Config, paths: string[] = 
   const result: StaticResult = { findings: [], docs: [], stylesheets: [], evidence: new Map(), errors: [] };
   const activeRules = rules.filter((r) => config.rules[r.id] !== 'off');
 
+  // Parse everything first so components imported from other files can be resolved.
   for (const abs of files.sort()) {
     const file = relative(cwd, abs);
     const source = await readFile(abs, 'utf8');
@@ -39,15 +41,17 @@ export async function lintStatic(cwd: string, config: Config, paths: string[] = 
     }
     const adapter = adapterFor(file);
     if (!adapter) continue;
-    let doc: IRDocument;
     try {
-      doc = await adapter(file, source);
+      result.docs.push(await adapter(file, source));
     } catch (err) {
       result.errors.push({ file, message: err instanceof Error ? err.message.split('\n')[0] : String(err) });
-      continue;
     }
+  }
+  await new ImportResolver(cwd, result.docs).link(result.docs);
+
+  for (const doc of result.docs) {
+    const file = doc.file;
     applyComponentMap(doc, config.components);
-    result.docs.push(doc);
     for (const el of walk(doc.root)) {
       if (el === doc.root || el.isComponent) continue;
       if (!result.evidence.has(el.tag)) result.evidence.set(el.tag, new Set());
@@ -76,8 +80,8 @@ const NON_DOM_SOURCES = /^(react-native(-.*)?|@react-native\/.*|expo-.*|@react-p
 
 /**
  * Treats configured components as the element they render, e.g. `Link` → `a[href]`.
- * Components defined in the same file fall back to their root tag; their props may set any
- * attribute, so they are marked as spread.
+ * Other components fall back to the root tag of their definition (same file or resolved import);
+ * their props may set any attribute, so they are marked as spread.
  */
 export function applyComponentMap(doc: IRDocument, map: Record<string, string>): void {
   for (const el of walk(doc.root)) {

@@ -1,6 +1,6 @@
 import { parse } from 'svelte/compiler';
 import { appendChild, DYNAMIC, dynamicAttr, element, extractStyles, lineIndex, staticAttr, type IRDocument, type IRElement } from '../ir.js';
-import { setAttr } from './common.js';
+import { collectImports, linkImports, setAttr, sfcExports } from './common.js';
 
 type SvelteNode = { type: string; start: number; [key: string]: any };
 
@@ -10,11 +10,12 @@ interface Ctx {
 }
 
 export function parseSvelte(file: string, source: string): IRDocument {
-  const ast = parse(source, { modern: true }) as unknown as { fragment: { nodes: SvelteNode[] } };
+  const ast = parse(source, { modern: true }) as unknown as { fragment: { nodes: SvelteNode[] }; instance?: { content: { body: SvelteNode[] } } };
   const toLoc = lineIndex(source);
   const root = element('#root', { line: 1, column: 1 });
   convertNodes(ast.fragment.nodes, root, { toLoc, source });
-  return { file, framework: 'svelte', isDocument: false, root, styles: extractStyles(source) };
+  linkImports(root, collectImports(ast.instance?.content.body ?? []));
+  return { file, framework: 'svelte', isDocument: false, root, styles: extractStyles(source), exports: sfcExports(root) };
 }
 
 /** Block fragments (`{#if}`, `{#each}`, ...) are flattened into the parent: every branch may render. */

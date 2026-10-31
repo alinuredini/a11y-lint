@@ -1,13 +1,13 @@
 import { parse } from '@babel/parser';
 import { appendChild, dynamicAttr, element, setDynamicContent, staticAttr, type IRDocument, type IRElement } from '../ir.js';
-import { alwaysHasText, isComponentName, setAttr } from './common.js';
+import { alwaysHasText, collectImports, isComponentName, linkImport, setAttr, type ImportBinding } from './common.js';
 
 type Node = { type: string; start?: number; end?: number; loc?: { start: { line: number; column: number } }; [key: string]: any };
 
 interface Context {
   source: string;
-  /** Local binding → module, from import declarations. */
-  imports: Map<string, string>;
+  /** Local binding → module and export name, from import declarations. */
+  imports: Map<string, ImportBinding>;
   /** Components defined in this file → the HTML tag they render at their root. */
   localTags: Map<string, string>;
 }
@@ -18,14 +18,12 @@ export function parseJsx(file: string, source: string): IRDocument {
     plugins: file.endsWith('.js') || file.endsWith('.jsx') ? ['jsx'] : ['jsx', 'typescript'],
     errorRecovery: true,
   });
-  const ctx: Context = { source, imports: new Map(), localTags: localComponentTags(ast.program.body as unknown as Node[]) };
-  for (const node of ast.program.body as Node[]) {
-    if (node.type !== 'ImportDeclaration') continue;
-    for (const s of node.specifiers) ctx.imports.set(s.local.name, node.source.value);
-  }
+  const body = ast.program.body as unknown as Node[];
+  const { locals, exports } = componentTags(body);
+  const ctx: Context = { source, imports: collectImports(body), localTags: locals };
   const root = element('#root', { line: 1, column: 1 });
   collectJsx(ast.program, root, ctx);
-  return { file, framework: 'jsx', isDocument: false, root, styles: [] };
+  return { file, framework: 'jsx', isDocument: false, root, styles: [], exports };
 }
 
 /** Finds JSX anywhere below `node` (returns, `.map()` callbacks, ternaries) and appends it to `parent`. */
@@ -57,7 +55,7 @@ function convertElement(node: Node, ctx: Context): IRElement {
   const el = element(rawName, { line: start.line, column: start.column + 1 });
   el.isComponent = isComponentName(rawName);
   if (el.isComponent) {
-    el.importSource = ctx.imports.get(rawName.split('.')[0]);
+    linkImport(el, ctx.imports);
     el.localTag = ctx.localTags.get(rawName);
   }
 
@@ -116,32 +114,73 @@ function jsxName(name: Node): string {
 }
 
 /**
- * Maps components declared at the top level of this file to the HTML tag of their
- * first returned JSX element, e.g. `function Field() { return <label>…</label> }` → `label`.
+ * Maps components declared at the top level of this file to the HTML tag of their returned
+ * root element, e.g. `function Field() { return <label>…</label> }` → `label`, and records
+ * which of them are exported under which name.
  */
-function localComponentTags(body: Node[]): Map<string, string> {
-  const tags = new Map<string, string>();
-  for (let stmt of body) {
-    if (stmt.type === 'ExportNamedDeclaration' || stmt.type === 'ExportDefaultDeclaration') stmt = stmt.declaration;
-    if (!stmt) continue;
-    const candidates: [string, Node][] = [];
-    if (stmt.type === 'FunctionDeclaration' && stmt.id) candidates.push([stmt.id.name, stmt]);
-    if (stmt.type === 'VariableDeclaration') {
-      for (const d of stmt.declarations) {
-        let init = d.init;
-        // forwardRef(...), memo(...)
-        while (init?.type === 'CallExpression' && init.arguments[0]) init = init.arguments[0];
-        if (d.id.type === 'Identifier' && init && /Function/.test(init.type)) candidates.push([d.id.name, init]);
+function componentTags(body: Node[]): { locals: Map<string, string>; exports: Map<string, string> } {
+  const locals = new Map<string, string>();
+  const exports = new Map<string, string>();
+  const exportedAs: [string, string][] = []; // [local, exported]
+  for (const top of body) {
+    let stmt = top;
+    if (top.type === 'ExportNamedDeclaration') {
+      if (!top.source) for (const s of top.specifiers ?? []) exportedAs.push([s.local.name, s.exported.name ?? s.exported.value]);
+      stmt = top.declaration;
+    }
+    if (top.type === 'ExportDefaultDeclaration') {
+      stmt = top.declaration;
+      if (stmt?.type === 'Identifier') exportedAs.push([stmt.name, 'default']);
+      else {
+        const tag = componentTag(unwrapWrappers(stmt));
+        if (tag) exports.set('default', tag);
+        if (stmt?.id?.name) exportedAs.push([stmt.id.name, 'default']);
       }
     }
-    for (const [name, fn] of candidates) {
+    if (!stmt) continue;
+    const declared: [string, Node | undefined][] = [];
+    if (stmt.type === 'FunctionDeclaration' && stmt.id) declared.push([stmt.id.name, stmt]);
+    if (stmt.type === 'VariableDeclaration') {
+      for (const d of stmt.declarations) if (d.id.type === 'Identifier') declared.push([d.id.name, unwrapWrappers(d.init)]);
+    }
+    for (const [name, fn] of declared) {
       if (!/^[A-Z]/.test(name)) continue;
-      const root = returnedJsx(fn.body);
-      const tag = root && jsxName(root.openingElement.name);
-      if (tag && !isComponentName(tag)) tags.set(name, tag.toLowerCase());
+      const tag = componentTag(fn);
+      if (tag) locals.set(name, tag);
+      if (top.type === 'ExportNamedDeclaration') exportedAs.push([name, name]);
     }
   }
-  return tags;
+  for (const [local, exported] of exportedAs) {
+    const tag = locals.get(local);
+    if (tag) exports.set(exported, tag);
+  }
+  return { locals, exports };
+}
+
+/** `forwardRef(fn)`, `memo(fn)`, `React.forwardRef(fn)` → `fn`. */
+function unwrapWrappers(node: Node | undefined): Node | undefined {
+  while (node?.type === 'CallExpression' && node.arguments[0]) node = node.arguments[0];
+  return node && /Function/.test(node.type) ? node : undefined;
+}
+
+/** HTML tag of the element a component function returns, including shadcn's `const Comp = asChild ? Slot : 'button'`. */
+function componentTag(fn: Node | undefined): string | undefined {
+  if (!fn?.body) return undefined;
+  const root = returnedJsx(fn.body);
+  if (!root) return undefined;
+  const name = jsxName(root.openingElement.name);
+  if (!isComponentName(name)) return name.toLowerCase();
+  if (fn.body.type !== 'BlockStatement') return undefined;
+  for (const stmt of fn.body.body) {
+    if (stmt.type !== 'VariableDeclaration') continue;
+    for (const d of stmt.declarations) {
+      if (d.id.name !== name) continue;
+      const options = d.init?.type === 'ConditionalExpression' ? [d.init.consequent, d.init.alternate] : [d.init];
+      const literal = options.find((o: Node | undefined) => o?.type === 'StringLiteral');
+      if (literal) return literal.value.toLowerCase();
+    }
+  }
+  return undefined;
 }
 
 function returnedJsx(body: Node | undefined): Node | undefined {

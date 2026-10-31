@@ -89,7 +89,7 @@ export const rules: Rule[] = [
       else if (el.tag === 'input' && getStatic(el, 'type') === 'button') name = or(hasValue(el.attrs.get('value')), authorName(el));
       else return;
       if (name === 'no') ctx.report(el, 'fail', `${describe(el)} has no accessible name. Add text or aria-label.`);
-      else if (name === 'unknown' && hasOnlyComponentContent(el)) ctx.report(el, 'unknown', `${describe(el)} contains only components (an icon?); verify they render text or add aria-label.`);
+      else if (name === 'unknown' && hasNoTextContent(el)) ctx.report(el, 'unknown', `${describe(el)} has no text of its own (only an icon?); verify it gets a name from its props or children.`);
     },
   },
   {
@@ -100,7 +100,7 @@ export const rules: Rule[] = [
       if (!((el.tag === 'a' && el.attrs.has('href')) || roleOf(el) === 'link') || inHiddenSubtree(el)) return;
       const name = accessibleName(el);
       if (name === 'no') ctx.report(el, 'fail', `${describe(el)} has no accessible name. Add text or aria-label.`);
-      else if (name === 'unknown' && hasOnlyComponentContent(el)) ctx.report(el, 'unknown', `${describe(el)} contains only components (an icon?); verify they render text or add aria-label.`);
+      else if (name === 'unknown' && hasNoTextContent(el)) ctx.report(el, 'unknown', `${describe(el)} has no text of its own (only an icon?); verify it gets a name from its props or children.`);
     },
   },
   {
@@ -469,6 +469,7 @@ export const rules: Rule[] = [
   },
 ];
 
-function hasOnlyComponentContent(el: IRElement): boolean {
-  return el.children.length > 0 && el.children.every((c) => (c.type === 'element' && c.isComponent) || (c.type === 'text' && !c.dynamic && !c.value.trim()));
+/** Content is only components, hidden decoration or whitespace: an icon button, typically. */
+function hasNoTextContent(el: IRElement): boolean {
+  return el.children.every((c) => (c.type === 'element' && (c.isComponent || isAriaHidden(c))) || (c.type === 'text' && !c.dynamic && !c.value.trim()));
 }

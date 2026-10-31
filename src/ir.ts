@@ -20,9 +20,11 @@ export interface IRElement {
   rawName: string;
   /** Unmapped component or custom element: rules skip it, children are still walked. */
   isComponent: boolean;
-  /** Module the component was imported from (`next/link`), when the adapter can tell. */
+  /** Module the component was imported from (`next/link`, `./Field`), when the adapter can tell. */
   importSource?: string;
-  /** Root tag of a component defined in the same file, used when config has no mapping for it. */
+  /** Name it was imported as in that module: `default` or the named export. */
+  importName?: string;
+  /** Root tag of the component's definition (same file or resolved import), used when config has no mapping. */
   localTag?: string;
   attrs: Map<string, AttrValue>;
   /** `{...props}`, `v-bind="obj"`: any attribute may be set at runtime. */
@@ -58,6 +60,8 @@ export interface IRDocument {
   isDocument: boolean;
   root: IRElement;
   styles: IRStyle[];
+  /** Exported component name (`default` for SFCs) → the HTML tag it renders at its root. */
+  exports?: Map<string, string>;
 }
 
 export function element(rawName: string, loc: Loc): IRElement {

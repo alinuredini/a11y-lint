@@ -1,6 +1,6 @@
 import { parse } from '@vue/compiler-sfc';
 import { appendChild, element, extractStyles, setDynamicContent, staticAttr, type IRDocument, type IRElement } from '../ir.js';
-import { exprAttr, isComponentName, setAttr } from './common.js';
+import { exprAttr, importsFromScript, isComponentName, linkImports, setAttr, sfcExports } from './common.js';
 
 // @vue/compiler-core NodeTypes / ElementTypes
 const ELEMENT = 1;
@@ -15,7 +15,8 @@ export function parseVue(file: string, source: string): IRDocument {
   const { descriptor } = parse(source, { filename: file });
   const root = element('#root', { line: 1, column: 1 });
   if (descriptor.template?.ast) convertChildren(descriptor.template.ast.children, root);
-  return { file, framework: 'vue', isDocument: false, root, styles: extractStyles(source) };
+  linkImports(root, importsFromScript(descriptor.scriptSetup?.content ?? descriptor.script?.content));
+  return { file, framework: 'vue', isDocument: false, root, styles: extractStyles(source), exports: sfcExports(root) };
 }
 
 function convertChildren(children: VueNode[], parent: IRElement): void {

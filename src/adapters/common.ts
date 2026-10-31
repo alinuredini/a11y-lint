@@ -1,5 +1,5 @@
-import { parseExpression } from '@babel/parser';
-import { dynamicAttr, type AttrValue, type IRElement } from '../ir.js';
+import { parse, parseExpression } from '@babel/parser';
+import { dynamicAttr, walk, type AttrValue, type IRElement } from '../ir.js';
 
 type Node = { type: string; [key: string]: any };
 
@@ -53,4 +53,63 @@ export function exprAttr(source: string | undefined): AttrValue {
     // not plain JS (Angular pipes etc.): leave it unknown
   }
   return dynamicAttr(source, nonEmpty);
+}
+
+export interface ImportBinding {
+  source: string;
+  /** `default`, a named export, or `*` for namespace imports. */
+  imported: string;
+}
+
+/** Import bindings from an ESTree/Babel program body. */
+export function collectImports(body: Node[]): Map<string, ImportBinding> {
+  const imports = new Map<string, ImportBinding>();
+  for (const node of body) {
+    if (node.type !== 'ImportDeclaration' || node.importKind === 'type') continue;
+    for (const s of node.specifiers) {
+      const imported =
+        s.type === 'ImportDefaultSpecifier' ? 'default' : s.type === 'ImportNamespaceSpecifier' ? '*' : (s.imported.name ?? s.imported.value);
+      imports.set(s.local.name, { source: node.source.value, imported });
+    }
+  }
+  return imports;
+}
+
+/** Parses a `<script>` block or Astro frontmatter for its imports; invalid code yields none. */
+export function importsFromScript(code: string | undefined): Map<string, ImportBinding> {
+  if (!code) return new Map();
+  try {
+    return collectImports(parse(code, { sourceType: 'module', plugins: ['typescript', 'jsx'], errorRecovery: true }).program.body as unknown as Node[]);
+  } catch {
+    return new Map();
+  }
+}
+
+/** Sets `importSource`/`importName` on a component from the file's imports (`UI.Button`, `my-field` → `MyField`). */
+export function linkImport(el: IRElement, imports: Map<string, ImportBinding>): void {
+  const [head, member] = el.rawName.split('.');
+  const pascal = head.includes('-') ? head.replace(/(^|-)([a-z])/g, (_, __, c: string) => c.toUpperCase()) : head;
+  const binding = imports.get(head) ?? imports.get(pascal);
+  if (!binding) return;
+  el.importSource = binding.source;
+  el.importName = binding.imported === '*' ? member : binding.imported;
+}
+
+/** The single root element of a single-file component, if there is exactly one and it is plain HTML. */
+export function singleRootTag(root: IRElement): string | undefined {
+  const elements = root.children.filter((c): c is IRElement => c.type === 'element' && c.tag !== 'style' && c.tag !== 'script');
+  const text = root.children.some((c) => c.type === 'text' && (c.dynamic || c.value.trim()));
+  if (elements.length !== 1 || text || elements[0].isComponent) return undefined;
+  return elements[0].tag;
+}
+
+export function linkImports(root: IRElement, imports: Map<string, ImportBinding>): void {
+  if (!imports.size) return;
+  for (const el of walk(root)) if (el.isComponent) linkImport(el, imports);
+}
+
+/** A Vue/Svelte/Astro component's default export renders its single root element. */
+export function sfcExports(root: IRElement): Map<string, string> | undefined {
+  const tag = singleRootTag(root);
+  return tag ? new Map([['default', tag]]) : undefined;
 }

@@ -1,6 +1,6 @@
 import { parse } from '@astrojs/compiler';
 import { appendChild, dynamicAttr, element, extractStyles, setDynamicContent, staticAttr, type IRDocument, type IRElement } from '../ir.js';
-import { exprAttr, setAttr } from './common.js';
+import { exprAttr, importsFromScript, linkImports, setAttr, sfcExports } from './common.js';
 
 type AstroNode = {
   type: string;
@@ -16,7 +16,9 @@ export async function parseAstro(file: string, source: string): Promise<IRDocume
   const root = element('#root', { line: 1, column: 1 });
   convertChildren(ast.children as AstroNode[], root, false);
   const isDocument = root.children.some((c) => c.type === 'element' && c.tag === 'html');
-  return { file, framework: 'astro', isDocument, root, styles: extractStyles(source) };
+  const frontmatter = (ast.children as AstroNode[]).find((c) => c.type === 'frontmatter')?.value;
+  linkImports(root, importsFromScript(frontmatter));
+  return { file, framework: 'astro', isDocument, root, styles: extractStyles(source), exports: sfcExports(root) };
 }
 
 function convertChildren(children: AstroNode[] = [], parent: IRElement, inExpression: boolean): void {
