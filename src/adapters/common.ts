@@ -1,5 +1,5 @@
 import { parse, parseExpression } from '@babel/parser';
-import { dynamicAttr, walk, type AttrValue, type IRElement } from '../ir.js';
+import { definitionOf, dynamicAttr, walk, type AttrValue, type ComponentDef, type IRElement } from '../ir.js';
 
 type Node = { type: string; [key: string]: any };
 
@@ -96,11 +96,11 @@ export function linkImport(el: IRElement, imports: Map<string, ImportBinding>): 
 }
 
 /** The single root element of a single-file component, if there is exactly one and it is plain HTML. */
-export function singleRootTag(root: IRElement): string | undefined {
+export function singleRoot(root: IRElement): IRElement | undefined {
   const elements = root.children.filter((c): c is IRElement => c.type === 'element' && c.tag !== 'style' && c.tag !== 'script');
   const text = root.children.some((c) => c.type === 'text' && (c.dynamic || c.value.trim()));
   if (elements.length !== 1 || text || elements[0].isComponent) return undefined;
-  return elements[0].tag;
+  return elements[0];
 }
 
 export function linkImports(root: IRElement, imports: Map<string, ImportBinding>): void {
@@ -108,8 +108,13 @@ export function linkImports(root: IRElement, imports: Map<string, ImportBinding>
   for (const el of walk(root)) if (el.isComponent) linkImport(el, imports);
 }
 
-/** A Vue/Svelte/Astro component's default export renders its single root element. */
-export function sfcExports(root: IRElement): Map<string, string> | undefined {
-  const tag = singleRootTag(root);
-  return tag ? new Map([['default', tag]]) : undefined;
+/**
+ * A Vue/Svelte/Astro component's default export renders its single root element. Vue passes
+ * attributes through to it automatically; Svelte and Astro only with an explicit spread.
+ */
+export function sfcExports(root: IRElement, framework: 'vue' | 'svelte' | 'astro'): Map<string, ComponentDef> | undefined {
+  const el = singleRoot(root);
+  if (!el) return undefined;
+  const ownContent = el.children.some((c) => (c.type === 'text' ? c.dynamic || c.value.trim() !== '' : c.rawName !== 'slot'));
+  return new Map([['default', definitionOf(el, framework === 'vue' || el.hasSpread, ownContent)]]);
 }

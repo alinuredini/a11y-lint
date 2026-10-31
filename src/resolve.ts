@@ -2,7 +2,8 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { parse } from '@babel/parser';
 import { adapterFor } from './adapters/index.js';
-import { walk, type IRDocument } from './ir.js';
+import { walk, type ComponentDef, type IRDocument } from './ir.js';
+import { primitiveDef } from './primitives.js';
 
 type Node = { type: string; [key: string]: any };
 
@@ -17,8 +18,8 @@ interface Alias {
 }
 
 /**
- * Gives components imported from other files the tag their definition renders:
- * `import { Button } from '@/components/ui/button'` → `button`. Follows relative paths,
+ * Gives components imported from other files the definition they render:
+ * `import { Button } from '@/components/ui/button'` → a `<button>` that forwards props. Follows relative paths,
  * tsconfig/jsconfig `paths` and barrel re-exports; files outside the scan are parsed on demand.
  */
 export class ImportResolver {
@@ -35,23 +36,23 @@ export class ImportResolver {
   async link(docs: IRDocument[]): Promise<void> {
     for (const doc of docs) {
       for (const el of walk(doc.root)) {
-        if (!el.isComponent || el.localTag || !el.importSource || !el.importName) continue;
-        el.localTag = await this.exportTag(resolve(this.cwd, doc.file), el.importSource, el.importName, 0);
+        if (!el.isComponent || el.definition || !el.importSource || !el.importName) continue;
+        el.definition = primitiveDef(el.importSource, el.importName) ?? await this.exportDef(resolve(this.cwd, doc.file), el.importSource, el.importName, 0);
       }
     }
   }
 
-  private async exportTag(fromFile: string, spec: string, name: string, depth: number): Promise<string | undefined> {
+  private async exportDef(fromFile: string, spec: string, name: string, depth: number): Promise<ComponentDef | undefined> {
     if (depth > MAX_DEPTH) return undefined;
     const file = this.resolveModule(fromFile, spec);
     if (!file) return undefined;
     const doc = await this.load(file);
-    const tag = doc?.exports?.get(name);
-    if (tag) return tag;
+    const def = doc?.exports?.get(name);
+    if (def) return def;
     // Barrel files: `export { Button } from './button'`, `export * from './ui'`.
     for (const reexport of reexports(file)) {
       if (reexport.all || reexport.exported === name) {
-        const found = await this.exportTag(file, reexport.source, reexport.all ? name : reexport.local, depth + 1);
+        const found = await this.exportDef(file, reexport.source, reexport.all ? name : reexport.local, depth + 1);
         if (found) return found;
       }
     }

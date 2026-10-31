@@ -1,5 +1,6 @@
 import { parse } from '@babel/parser';
-import { appendChild, dynamicAttr, element, setDynamicContent, staticAttr, type IRDocument, type IRElement } from '../ir.js';
+import { appendChild, definitionOf, dynamicAttr, element, setDynamicContent, staticAttr, type ComponentDef, type IRDocument, type IRElement } from '../ir.js';
+import { primitiveDef } from '../primitives.js';
 import { alwaysHasText, collectImports, isComponentName, linkImport, setAttr, type ImportBinding } from './common.js';
 
 type Node = { type: string; start?: number; end?: number; loc?: { start: { line: number; column: number } }; [key: string]: any };
@@ -8,8 +9,8 @@ interface Context {
   source: string;
   /** Local binding → module and export name, from import declarations. */
   imports: Map<string, ImportBinding>;
-  /** Components defined in this file → the HTML tag they render at their root. */
-  localTags: Map<string, string>;
+  /** Components defined in this file → what they render at their root. */
+  localDefs: Map<string, ComponentDef>;
 }
 
 export function parseJsx(file: string, source: string): IRDocument {
@@ -19,8 +20,9 @@ export function parseJsx(file: string, source: string): IRDocument {
     errorRecovery: true,
   });
   const body = ast.program.body as unknown as Node[];
-  const { locals, exports } = componentTags(body);
-  const ctx: Context = { source, imports: collectImports(body), localTags: locals };
+  const ctx: Context = { source, imports: collectImports(body), localDefs: new Map() };
+  const { locals, exports } = componentDefs(body, ctx);
+  ctx.localDefs = locals;
   const root = element('#root', { line: 1, column: 1 });
   collectJsx(ast.program, root, ctx);
   return { file, framework: 'jsx', isDocument: false, root, styles: [], exports };
@@ -56,7 +58,7 @@ function convertElement(node: Node, ctx: Context): IRElement {
   el.isComponent = isComponentName(rawName);
   if (el.isComponent) {
     linkImport(el, ctx.imports);
-    el.localTag = ctx.localTags.get(rawName);
+    el.definition = ctx.localDefs.get(rawName);
   }
 
   for (const attr of opening.attributes) {
@@ -114,13 +116,12 @@ function jsxName(name: Node): string {
 }
 
 /**
- * Maps components declared at the top level of this file to the HTML tag of their returned
- * root element, e.g. `function Field() { return <label>…</label> }` → `label`, and records
- * which of them are exported under which name.
+ * Components declared at the top level of this file and what they render at their root,
+ * e.g. `function Field() { return <label>…</label> }`, plus which are exported under which name.
  */
-function componentTags(body: Node[]): { locals: Map<string, string>; exports: Map<string, string> } {
-  const locals = new Map<string, string>();
-  const exports = new Map<string, string>();
+function componentDefs(body: Node[], ctx: Context): { locals: Map<string, ComponentDef>; exports: Map<string, ComponentDef> } {
+  const locals = new Map<string, ComponentDef>();
+  const exports = new Map<string, ComponentDef>();
   const exportedAs: [string, string][] = []; // [local, exported]
   for (const top of body) {
     let stmt = top;
@@ -132,8 +133,8 @@ function componentTags(body: Node[]): { locals: Map<string, string>; exports: Ma
       stmt = top.declaration;
       if (stmt?.type === 'Identifier') exportedAs.push([stmt.name, 'default']);
       else {
-        const tag = componentTag(unwrapWrappers(stmt));
-        if (tag) exports.set('default', tag);
+        const def = componentDef(unwrapWrappers(stmt), ctx);
+        if (def) exports.set('default', def);
         if (stmt?.id?.name) exportedAs.push([stmt.id.name, 'default']);
       }
     }
@@ -145,14 +146,14 @@ function componentTags(body: Node[]): { locals: Map<string, string>; exports: Ma
     }
     for (const [name, fn] of declared) {
       if (!/^[A-Z]/.test(name)) continue;
-      const tag = componentTag(fn);
-      if (tag) locals.set(name, tag);
+      const def = componentDef(fn, ctx);
+      if (def) locals.set(name, def);
       if (top.type === 'ExportNamedDeclaration') exportedAs.push([name, name]);
     }
   }
   for (const [local, exported] of exportedAs) {
-    const tag = locals.get(local);
-    if (tag) exports.set(exported, tag);
+    const def = locals.get(local);
+    if (def) exports.set(exported, def);
   }
   return { locals, exports };
 }
@@ -163,24 +164,38 @@ function unwrapWrappers(node: Node | undefined): Node | undefined {
   return node && /Function/.test(node.type) ? node : undefined;
 }
 
-/** HTML tag of the element a component function returns, including shadcn's `const Comp = asChild ? Slot : 'button'`. */
-function componentTag(fn: Node | undefined): string | undefined {
+/** The element a component function returns, including shadcn's `const Comp = asChild ? Slot : 'button'`. */
+function componentDef(fn: Node | undefined, ctx: Context): ComponentDef | undefined {
   if (!fn?.body) return undefined;
   const root = returnedJsx(fn.body);
   if (!root) return undefined;
   const name = jsxName(root.openingElement.name);
-  if (!isComponentName(name)) return name.toLowerCase();
-  if (fn.body.type !== 'BlockStatement') return undefined;
-  for (const stmt of fn.body.body) {
-    if (stmt.type !== 'VariableDeclaration') continue;
-    for (const d of stmt.declarations) {
-      if (d.id.name !== name) continue;
-      const options = d.init?.type === 'ConditionalExpression' ? [d.init.consequent, d.init.alternate] : [d.init];
-      const literal = options.find((o: Node | undefined) => o?.type === 'StringLiteral');
-      if (literal) return literal.value.toLowerCase();
+  let tag = isComponentName(name) ? undefined : name.toLowerCase();
+  if (!tag && fn.body.type === 'BlockStatement') {
+    for (const stmt of fn.body.body) {
+      if (stmt.type !== 'VariableDeclaration') continue;
+      for (const d of stmt.declarations) {
+        if (d.id.name !== name) continue;
+        const options = d.init?.type === 'ConditionalExpression' ? [d.init.consequent, d.init.alternate] : [d.init];
+        const literal = options.find((o: Node | undefined) => o?.type === 'StringLiteral');
+        if (literal) tag = literal.value.toLowerCase();
+      }
     }
   }
-  return undefined;
+  const el = convertElement(root, ctx);
+  if (!tag) tag = primitiveDef(el.importSource, el.importName)?.tag; // `<LabelPrimitive.Root>`
+  if (!tag) return undefined;
+  el.tag = tag;
+  return definitionOf(el, el.hasSpread, root.children.some(isOwnContent));
+}
+
+/** Content a component renders itself, as opposed to passing through `{children}`. */
+function isOwnContent(child: Node): boolean {
+  if (child.type === 'JSXText') return child.value.trim() !== '';
+  if (child.type !== 'JSXExpressionContainer') return true;
+  const expr = child.expression;
+  if (expr.type === 'JSXEmptyExpression') return false;
+  return !(expr.type === 'Identifier' && expr.name === 'children') && !(expr.type === 'MemberExpression' && expr.property.name === 'children');
 }
 
 function returnedJsx(body: Node | undefined): Node | undefined {

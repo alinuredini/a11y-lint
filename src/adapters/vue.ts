@@ -16,7 +16,7 @@ export function parseVue(file: string, source: string): IRDocument {
   const root = element('#root', { line: 1, column: 1 });
   if (descriptor.template?.ast) convertChildren(descriptor.template.ast.children, root);
   linkImports(root, importsFromScript(descriptor.scriptSetup?.content ?? descriptor.script?.content));
-  return { file, framework: 'vue', isDocument: false, root, styles: extractStyles(source), exports: sfcExports(root) };
+  return { file, framework: 'vue', isDocument: false, root, styles: extractStyles(source), exports: sfcExports(root, 'vue') };
 }
 
 function convertChildren(children: VueNode[], parent: IRElement): void {

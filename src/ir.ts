@@ -24,8 +24,8 @@ export interface IRElement {
   importSource?: string;
   /** Name it was imported as in that module: `default` or the named export. */
   importName?: string;
-  /** Root tag of the component's definition (same file or resolved import), used when config has no mapping. */
-  localTag?: string;
+  /** What the component's definition renders (same file or resolved import), used when config has no mapping. */
+  definition?: ComponentDef;
   attrs: Map<string, AttrValue>;
   /** `{...props}`, `v-bind="obj"`: any attribute may be set at runtime. */
   hasSpread: boolean;
@@ -60,8 +60,24 @@ export interface IRDocument {
   isDocument: boolean;
   root: IRElement;
   styles: IRStyle[];
-  /** Exported component name (`default` for SFCs) → the HTML tag it renders at its root. */
-  exports?: Map<string, string>;
+  /** Exported component name (`default` for SFCs) → what it renders at its root. */
+  exports?: Map<string, ComponentDef>;
+}
+
+/** The root element a component renders, so usages can be checked as that element. */
+export interface ComponentDef {
+  tag: string;
+  /** Attributes the root sets itself (`type="button"`, `aria-label={label}`). */
+  attrs: Map<string, AttrValue>;
+  events: Set<string>;
+  /** The root spreads props (`{...props}`, Vue fallthrough), so usage attributes and handlers reach it. */
+  forwardsProps: boolean;
+  /** The root renders content besides the usage's children (`{label}`, an inner `<span>`). */
+  ownContent: boolean;
+}
+
+export function definitionOf(root: IRElement, forwardsProps: boolean, ownContent: boolean): ComponentDef {
+  return { tag: root.tag, attrs: new Map(root.attrs), events: new Set(root.events), forwardsProps, ownContent };
 }
 
 export function element(rawName: string, loc: Loc): IRElement {

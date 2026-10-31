@@ -162,7 +162,8 @@ export const rules: Rule[] = [
       const hasPointer = POINTER_EVENTS.some((e) => el.events.has(e));
       const interactiveRole = role !== undefined && INTERACTIVE_ROLES.has(role) && !['textbox', 'searchbox'].includes(role);
       if (!hasPointer && !interactiveRole) return;
-      if (role === 'presentation' || role === 'none') return;
+      // Disabled widgets (shadcn's BreadcrumbPage is `role="link" aria-disabled="true"`) needn't be focusable.
+      if (role === 'presentation' || role === 'none' || getStatic(el, 'aria-disabled') === 'true') return;
       const ti = tabindex(el);
       if (ti === undefined || (typeof ti === 'number' && ti < 0)) {
         if (hasPointer && !interactiveRole && containsInteractive(el)) {

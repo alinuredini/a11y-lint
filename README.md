@@ -1,6 +1,6 @@
 # a11y-lint
 
-A framework-agnostic WCAG 2.2 linter. It checks a repo's source (HTML, JSX/TSX, Vue, Svelte, Astro and Angular templates, CSS/SCSS, design tokens) and, optionally, rendered pages, then maps every finding to a WCAG success criterion.
+A framework-agnostic WCAG 2.2 linter. It checks a repo's source (HTML, JSX/TSX, Vue, Svelte, Astro, Angular templates including inline `template:` strings, CSS/SCSS, design tokens) and, optionally, rendered pages, then maps every finding to a WCAG success criterion.
 
 > **No tool can prove WCAG conformance.** Automated checks cover roughly a third of the success criteria. a11y-lint reports definite failures, flags what needs a human decision, and generates the manual checklist for everything else.
 
@@ -22,7 +22,13 @@ A framework-agnostic WCAG 2.2 linter. It checks a repo's source (HTML, JSX/TSX, 
 
 - **One element tree, many frameworks.** Each adapter turns its template syntax into the same tree, so rules are written once.
 - **Three-valued results.** `alt={caption}` or `{...props}` can't be judged until runtime. Those are reported as *review*, never as failures, which keeps false positives low.
-- **Components.** `Link`, `RouterLink`, `NuxtLink` and `Image` map to `a[href]` and `img` by default, except when imported from a non-DOM renderer such as React Native or react-pdf. A component defined in the same file is treated as its root element, so a local `Field` that renders `<label>` counts as a label. Add your own mappings in `components`. Other components are skipped, but their children are still checked.
+- **Components are followed to what they render.** A usage like `<Input placeholder="Search" />` is checked as the element its definition returns, with the attributes that definition sets and the props it forwards. Imports are followed through:
+  - relative paths
+  - tsconfig/jsconfig `paths` aliases
+  - barrel re-exports
+  - Vue, Svelte and Astro single-root components
+
+  This also covers shadcn's `asChild ? Slot : 'button'` and headless primitives such as Radix `Label`. `Link`, `RouterLink`, `NuxtLink` and `Image` map to `a[href]` and `img`, except when imported from React Native or react-pdf. Add your own mappings in `components`. Components that can't be resolved, such as package components, are skipped, but their children are still checked.
 - **Runtime values it can still reason about.** `` aria-label={`Remove ${name}`} `` and `aria-label="Remove {name}"` always contain text. `<label for={id}>` matches `<input id={id}>`. `set:html`, `v-html`, `[innerHTML]` and `dangerouslySetInnerHTML` count as content.
 
 ## Install and run
@@ -49,7 +55,7 @@ Exit codes: `0` clean, `1` failures found (`--fail-on review|never` to change th
 | Layer | Checks | WCAG |
 | --- | --- | --- |
 | Static rules | image alt and alt quality, button/link/iframe/dialog names, form labels, keyboard access for click handlers, widget roles, positive tabindex, ARIA attribute/role validity and required states, aria-hidden on focusable elements, label-in-name, empty headings, heading order, page lang and title, bypass blocks, autoplay, captions, marquee/blink, meta refresh and zoom, autocomplete, removed focus outlines, table headers | 1.1.1, 1.2.2, 1.3.1, 1.3.5, 1.4.2, 1.4.4, 2.1.1, 2.2.1, 2.2.2, 2.4.1–2.4.4, 2.4.6, 2.4.7, 2.4.9, 2.5.3, 3.1.1, 3.1.2, 3.3.2, 4.1.2 |
-| Contrast | design tokens (DTCG and Style Dictionary, with aliases and themes), CSS custom properties per theme (`:root`, `.dark`, `[data-theme]`, `prefers-color-scheme`), CSS rules that set both colour and background, Tailwind v4 `text-*`/`bg-*` pairs including `dark:` variants and opacity | 1.4.3, 1.4.6, 1.4.11 |
+| Contrast | design tokens (DTCG and Style Dictionary, with aliases and themes), CSS custom properties per theme (`:root`, `.dark`, `[data-theme]`, `prefers-color-scheme`), CSS rules that set both colour and background, Tailwind `text-*`/`bg-*` pairs including `dark:` variants and opacity (v4 `@theme` or a v3 `tailwind.config`) | 1.4.3, 1.4.6, 1.4.11 |
 | CSS | `:focus { outline: none }` without a replacement, animations without `prefers-reduced-motion` (AAA) | 2.4.7, 2.3.3 |
 | Runtime | every axe-core WCAG rule for the target level (contrast after the cascade, target size, ARIA in the real DOM…), plus a keyboard walk for focus traps, invisible focus and obscured focus | 2.1.2, 2.4.7, 2.4.11, 2.5.8 and more |
 
@@ -96,10 +102,10 @@ Exit codes: `0` clean, `1` failures found (`--fail-on review|never` to change th
 
 ## Known limits
 
-- Component boundaries: static rules can't see what a child component renders unless you map it. Runtime scans fill this gap.
-- Tailwind v3 JS configs aren't resolved yet; v4 `@theme` and the default palette are.
+- Components from packages (other than the known headless primitives) and components with several possible root elements are skipped. Runtime scans fill this gap.
+- Tailwind v3 support runs your `tailwind.config.*`, as Tailwind itself does. A TypeScript config needs a Node version with type stripping (22.18+).
 - Contrast is checked only where colour and background are both known statically, for example in the same CSS rule or on the same element and its ancestors.
-- Angular inline `template:` strings and JSX in `.ts` files aren't parsed yet.
+- Angular `templateUrl` files are linted only when they're named `*.component.html`. JSX in plain `.ts` files isn't parsed.
 - Hyphenated tags are treated as custom elements, so SVG elements like `clip-path` are skipped.
 
 ## Development

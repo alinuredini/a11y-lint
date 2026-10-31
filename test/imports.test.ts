@@ -21,12 +21,22 @@ describe('components imported from other files', () => {
     ]);
   });
 
+  it('checks usages as the definition renders: forwarded props, own attributes', async () => {
+    // Unlabelled shadcn-style Input fails; aria-label on usage reaches it; SearchBox labels itself.
+    expect(await findings('src/pages/Form.tsx')).toEqual(['8 fail form-label']);
+  });
+
+  it('matches shadcn Label (Radix primitive) and keeps spreads through nested wrappers', async () => {
+    // PasswordInput's inner <Input {...props}> may get a label from its caller: review, not fail.
+    expect(await findings('src/pages/Login.tsx')).toEqual(['5 unknown form-label']);
+  });
+
   it('resolves Vue SFC imports in PascalCase and kebab-case', async () => {
     expect(await findings('src/pages/Page.vue')).toEqual([]);
   });
 
   it('resolves Svelte component imports', async () => {
-    expect(await findings('src/pages/Page.svelte')).toEqual(['4 unknown button-name']); // the wrapper may add a label itself
+    expect(await findings('src/pages/Page.svelte')).toEqual(['4 fail button-name']); // forwards props, adds no label
   });
 
   it('keeps comment-like text inside strings when reading tsconfig', () => {

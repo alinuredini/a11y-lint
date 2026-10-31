@@ -3,7 +3,7 @@ import { relative } from 'node:path';
 import { glob } from 'tinyglobby';
 import { adapterFor } from './adapters/index.js';
 import type { Config } from './config.js';
-import { DYNAMIC, walk, type IRDocument } from './ir.js';
+import { DYNAMIC, walk, type ComponentDef, type IRDocument, type IRElement } from './ir.js';
 import { ImportResolver } from './resolve.js';
 import { rules } from './rules/index.js';
 import type { Finding, RuleContext } from './types.js';
@@ -75,13 +75,27 @@ export async function lintStatic(cwd: string, config: Config, paths: string[] = 
   return result;
 }
 
+/** Checks a component usage as the root element its definition renders. */
+function inline(el: IRElement, def: ComponentDef): void {
+  el.tag = def.tag;
+  el.isComponent = false;
+  if (!def.forwardsProps) {
+    el.attrs = new Map();
+    el.events = new Set();
+  }
+  for (const [name, value] of def.attrs) if (!el.attrs.has(name)) el.attrs.set(name, value);
+  for (const event of def.events) el.events.add(event);
+  // A spread at the usage (`<Input {...props} />` inside another wrapper) still passes unknown props.
+  el.hasSpread = el.hasSpread && def.forwardsProps;
+  if (def.ownContent) el.children.unshift({ type: 'text', value: '', dynamic: true });
+}
+
 /** Renderers whose components are not DOM elements, so `Image` or `Link` there is not `<img>`/`<a>`. */
 const NON_DOM_SOURCES = /^(react-native(-.*)?|@react-native\/.*|expo-.*|@react-pdf\/.*|@react-three\/.*|ink|@react-email\/.*)$/;
 
 /**
  * Treats configured components as the element they render, e.g. `Link` → `a[href]`.
- * Other components fall back to the root tag of their definition (same file or resolved import);
- * their props may set any attribute, so they are marked as spread.
+ * Other components are checked as the root element of their definition (same file or resolved import).
  */
 export function applyComponentMap(doc: IRDocument, map: Record<string, string>): void {
   for (const el of walk(doc.root)) {
@@ -89,11 +103,7 @@ export function applyComponentMap(doc: IRDocument, map: Record<string, string>):
     if (el.importSource && NON_DOM_SOURCES.test(el.importSource)) continue;
     const spec = map[el.rawName];
     if (!spec) {
-      if (el.localTag) {
-        el.tag = el.localTag;
-        el.isComponent = false;
-        el.hasSpread = true;
-      }
+      if (el.definition) inline(el, el.definition);
       continue;
     }
     const m = /^([a-z][a-z0-9-]*)((?:\[[a-z-]+\])*)$/i.exec(spec);

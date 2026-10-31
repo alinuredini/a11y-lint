@@ -152,3 +152,9 @@ describe('event handlers', () => {
     expect(jsx('<div onClick={(e: React.MouseEvent) => { e.stopPropagation(); }}>x</div>')).toEqual([]);
   });
 });
+
+describe('disabled widgets', () => {
+  it('does not require focusability for aria-disabled widgets', () => {
+    expect(html('<span role="link" aria-disabled="true" aria-current="page">Here</span>')).toEqual([]);
+  });
+});

@@ -15,7 +15,7 @@ export function parseSvelte(file: string, source: string): IRDocument {
   const root = element('#root', { line: 1, column: 1 });
   convertNodes(ast.fragment.nodes, root, { toLoc, source });
   linkImports(root, collectImports(ast.instance?.content.body ?? []));
-  return { file, framework: 'svelte', isDocument: false, root, styles: extractStyles(source), exports: sfcExports(root) };
+  return { file, framework: 'svelte', isDocument: false, root, styles: extractStyles(source), exports: sfcExports(root, 'svelte') };
 }
 
 /** Block fragments (`{#if}`, `{#each}`, ...) are flattened into the parent: every branch may render. */
@@ -27,9 +27,13 @@ function convertNodes(nodes: SvelteNode[], parent: IRElement, ctx: Ctx): void {
       case 'Text':
         appendChild(parent, { type: 'text', value: node.data, dynamic: false });
         break;
+      case 'RenderTag':
+        // `{@render children()}` passes the usage's content through, like a <slot>.
+        if (ctx.source.slice(node.start, node.end).includes('children')) appendChild(parent, { ...element('slot', ctx.toLoc(node.start)), isComponent: true });
+        else appendChild(parent, { type: 'text', value: '', dynamic: true });
+        break;
       case 'ExpressionTag':
       case 'HtmlTag':
-      case 'RenderTag':
         appendChild(parent, { type: 'text', value: '', dynamic: true });
         break;
       case 'RegularElement':

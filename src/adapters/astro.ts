@@ -18,7 +18,7 @@ export async function parseAstro(file: string, source: string): Promise<IRDocume
   const isDocument = root.children.some((c) => c.type === 'element' && c.tag === 'html');
   const frontmatter = (ast.children as AstroNode[]).find((c) => c.type === 'frontmatter')?.value;
   linkImports(root, importsFromScript(frontmatter));
-  return { file, framework: 'astro', isDocument, root, styles: extractStyles(source), exports: sfcExports(root) };
+  return { file, framework: 'astro', isDocument, root, styles: extractStyles(source), exports: sfcExports(root, 'astro') };
 }
 
 function convertChildren(children: AstroNode[] = [], parent: IRElement, inExpression: boolean): void {
