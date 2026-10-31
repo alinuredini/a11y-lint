@@ -1,6 +1,6 @@
 import { parse } from '@astrojs/compiler';
-import { appendChild, DYNAMIC, element, extractStyles, staticAttr, type IRDocument, type IRElement } from '../ir.js';
-import { setAttr } from './common.js';
+import { appendChild, dynamicAttr, element, extractStyles, setDynamicContent, staticAttr, type IRDocument, type IRElement } from '../ir.js';
+import { exprAttr, setAttr } from './common.js';
 
 type AstroNode = {
   type: string;
@@ -50,7 +50,9 @@ function convertElement(node: AstroNode): IRElement {
     if (attr.kind === 'spread') el.hasSpread = true;
     else if (attr.kind === 'quoted') setAttr(el, attr.name, staticAttr(attr.value));
     else if (attr.kind === 'empty') setAttr(el, attr.name, staticAttr(''));
-    else setAttr(el, attr.name, DYNAMIC);
+    else if (attr.name === 'set:html' || attr.name === 'set:text') setDynamicContent(el);
+    else if (attr.kind === 'template-literal') setAttr(el, attr.name, dynamicAttr(attr.value, attr.value.replace(/\$\{[^}]*\}/g, '').trim() !== ''));
+    else setAttr(el, attr.name, attr.kind === 'expression' ? exprAttr(attr.value) : dynamicAttr());
   }
   convertChildren(node.children, el, false);
   return el;

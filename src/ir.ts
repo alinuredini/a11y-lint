@@ -5,8 +5,12 @@ export interface Loc {
   column: number; // 1-based
 }
 
-/** A value known at lint time, or one that only exists at runtime (`alt={caption}`). */
-export type AttrValue = { kind: 'static'; value: string } | { kind: 'dynamic' };
+/**
+ * A value known at lint time, or one that only exists at runtime (`alt={caption}`).
+ * `expr` is the expression source, so `for={id}` can be matched with `id={id}`.
+ * `nonEmpty` marks runtime values that always contain text (`` `Remove ${name}` ``).
+ */
+export type AttrValue = { kind: 'static'; value: string } | { kind: 'dynamic'; expr?: string; nonEmpty?: boolean };
 
 export interface IRElement {
   type: 'element';
@@ -16,6 +20,10 @@ export interface IRElement {
   rawName: string;
   /** Unmapped component or custom element: rules skip it, children are still walked. */
   isComponent: boolean;
+  /** Module the component was imported from (`next/link`), when the adapter can tell. */
+  importSource?: string;
+  /** Root tag of a component defined in the same file, used when config has no mapping for it. */
+  localTag?: string;
   attrs: Map<string, AttrValue>;
   /** `{...props}`, `v-bind="obj"`: any attribute may be set at runtime. */
   hasSpread: boolean;
@@ -71,6 +79,15 @@ export function staticAttr(value: string): AttrValue {
 }
 
 export const DYNAMIC: AttrValue = { kind: 'dynamic' };
+
+export function dynamicAttr(expr?: string, nonEmpty = false): AttrValue {
+  return { kind: 'dynamic', expr: expr?.replace(/\s+/g, ''), nonEmpty };
+}
+
+/** Marks an element whose content is set from a string at runtime (`v-html`, `set:html`, `[innerHTML]`). */
+export function setDynamicContent(el: IRElement): void {
+  el.children.push({ type: 'text', value: '', dynamic: true });
+}
 
 export function appendChild(parent: IRElement, child: IRNode): void {
   if (child.type === 'element') child.parent = parent;

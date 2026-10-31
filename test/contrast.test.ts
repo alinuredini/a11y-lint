@@ -2,7 +2,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { failedThreshold, parseColor, contrast } from '../src/contrast/color.js';
 import { checkContrast } from '../src/contrast/index.js';
-import { checkTokens, loadTokens } from '../src/contrast/tokens.js';
+import { checkTokens, loadTokens, pairTokens } from '../src/contrast/tokens.js';
 import { DEFAULT_CONFIG, type Config } from '../src/config.js';
 import { lintStatic } from '../src/engine.js';
 
@@ -31,14 +31,20 @@ describe('design tokens', () => {
 
   it('auto-pairs text with backgrounds and on-x with x', () => {
     const aa = checkTokens(set, { target: 'AA', pairs: [], autoPair: true }).map((f) => f.message.split(':')[0]);
-    expect(aa).toEqual([
-      'color.text.muted on color.bg.default',
-      'color.text.muted on color.bg.subtle',
-      'color.focus.ring on color.bg.default',
-      'color.focus.ring on color.bg.subtle',
-    ]);
+    // Only the main background: text.muted on bg.subtle is plausible but not certain, so it needs an explicit pair.
+    expect(aa).toEqual(['color.text.muted on color.bg.default', 'color.focus.ring on color.bg.default']);
     const aaa = checkTokens(set, { target: 'AAA', pairs: [], autoPair: true });
     expect(aaa.some((f) => f.message.startsWith('color.on-primary on color.primary') && f.criteria[0] === '1.4.6')).toBe(true);
+  });
+
+  it('pairs shadcn-style x-foreground with x', () => {
+    const tokens = new Map(
+      Object.entries({ background: '#ffffff', foreground: '#0a0a0a', muted: '#f4f4f5', 'muted-foreground': '#a1a1aa', card: '#fff', 'chart-tooltip-background': '#000' }).map(
+        ([name, value]) => [name, { name, value, file: 'x.css', line: 1 }],
+      ),
+    );
+    const names = pairTokens(tokens, [], true).map((p) => `${p.fg.name}/${p.bg.name}`);
+    expect(names).toEqual(['foreground/background', 'muted-foreground/muted', 'muted-foreground/background']);
   });
 
   it('checks only explicit pairs when given', () => {
@@ -55,7 +61,7 @@ describe('stylesheets and Tailwind', () => {
   it('checks CSS rules per theme, focus outlines, and Tailwind classes', async () => {
     const config: Config = { ...DEFAULT_CONFIG, level: 'AA' };
     const result = await lintStatic(fixtures, config, ['theme.css', 'vue/Card.vue']);
-    const found = checkContrast(fixtures, config, result).map((f) => `${f.file}:${f.line} ${f.ruleId}`);
+    const found = checkContrast(fixtures, config, result).findings.map((f) => `${f.file}:${f.line} ${f.ruleId}`);
     expect(found).toEqual(
       expect.arrayContaining([
         'theme.css:9 color-contrast', // .banner in the dark theme
@@ -70,11 +76,26 @@ describe('stylesheets and Tailwind', () => {
     expect(found.filter((f) => f === 'vue/Card.vue:12 tailwind-contrast')).toHaveLength(1);
   });
 
+  it('keeps variables from docs/ prototypes out of the app', async () => {
+    const config: Config = { ...DEFAULT_CONFIG, level: 'AA' };
+    const result = await lintStatic(fixtures, config, ['theme.css', 'docs/proto.css']);
+    const msgs = checkContrast(fixtures, config, result).findings.map((f) => f.message);
+    expect(msgs.some((m) => m.includes('light'))).toBe(false);
+  });
+
+  it('checks dark: variants without a CSS dark theme', async () => {
+    const config: Config = { ...DEFAULT_CONFIG, level: 'AA' };
+    const result = await lintStatic(fixtures, config, ['jsx/Dark.tsx']);
+    const msgs = checkContrast(fixtures, config, result).findings.map((f) => f.message);
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]).toContain('(dark)');
+  });
+
   it('requires prefers-reduced-motion at AAA only', async () => {
     const aa: Config = { ...DEFAULT_CONFIG, level: 'AA' };
     const aaa: Config = { ...DEFAULT_CONFIG, level: 'AAA' };
     const result = await lintStatic(fixtures, aa, ['theme.css']);
-    expect(checkContrast(fixtures, aa, result).some((f) => f.ruleId === 'reduced-motion')).toBe(false);
-    expect(checkContrast(fixtures, aaa, result).some((f) => f.ruleId === 'reduced-motion')).toBe(true);
+    expect(checkContrast(fixtures, aa, result).findings.some((f) => f.ruleId === 'reduced-motion')).toBe(false);
+    expect(checkContrast(fixtures, aaa, result).findings.some((f) => f.ruleId === 'reduced-motion')).toBe(true);
   });
 });

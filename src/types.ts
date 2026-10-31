@@ -27,6 +27,8 @@ export interface Rule {
   id: string;
   description: string;
   criteria: string[];
+  /** Catches some failures, but finding none is no evidence the criterion is met. */
+  partial?: boolean;
   /** Called once per non-component element. */
   check?(el: IRElement, ctx: RuleContext): void;
   /** Called once per document, for checks that need the whole tree. */

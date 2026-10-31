@@ -20,6 +20,15 @@ describe('conformance report', () => {
     expect(state('3.2.3')).toBe('manual');
   });
 
+  it('counts contrast and focus as covered only when something was evaluated', async () => {
+    const plain = await run(fixtures, { ...DEFAULT_CONFIG, level: 'AA' }, { paths: ['plain'] });
+    const state = (id: string) => plain.conformance.find((r) => r.criterion.id === id)!.state;
+    expect(state('1.4.3')).toBe('manual'); // no colour pair to check
+    expect(state('2.4.7')).toBe('manual'); // only the runtime keyboard walk can confirm focus visibility
+    const jsx = await run(fixtures, { ...DEFAULT_CONFIG, level: 'AA' }, { paths: ['jsx'] });
+    expect(jsx.conformance.find((r) => r.criterion.id === '1.4.3')!.state).toBe('fail');
+  });
+
   it('includes AAA criteria only at AAA', async () => {
     const aa = await run(fixtures, { ...DEFAULT_CONFIG, level: 'AA' }, { paths: ['jsx'] });
     const aaa = await run(fixtures, { ...DEFAULT_CONFIG, level: 'AAA' }, { paths: ['jsx'] });

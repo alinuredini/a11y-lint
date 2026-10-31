@@ -48,6 +48,8 @@ export const DEFAULT_CONFIG: Config = {
     '**/.svelte-kit/**',
     '**/.astro/**',
     '**/storybook-static/**',
+    '**/*.{test,spec}.*',
+    '**/__tests__/**',
   ],
   components: {
     Link: 'a[href]',

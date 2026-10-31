@@ -21,8 +21,8 @@ export interface ConformanceInput {
   pagesScanned: string[];
 }
 
-const CONTRAST_CRITERIA = ['1.4.3', '1.4.6', '1.4.11', '2.4.7', '2.3.3'];
-export const STATIC_CRITERIA = new Set([...rules.flatMap((r) => r.criteria), ...CONTRAST_CRITERIA]);
+/** Criteria a static rule evaluates on every element; contrast and runtime coverage are added per run. */
+export const STATIC_CRITERIA = new Set(rules.filter((r) => !r.partial).flatMap((r) => r.criteria));
 
 /** Criteria that don't apply when the source has none of these elements. */
 const APPLIES_WHEN: Record<string, string[]> = {

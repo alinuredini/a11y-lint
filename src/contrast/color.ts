@@ -20,9 +20,12 @@ export interface ContrastResult {
   uncertain: boolean;
 }
 
-export function contrast(fg: Rgb, bg: Rgb): ContrastResult {
+const WHITE: Rgb = { mode: 'rgb', r: 1, g: 1, b: 1 };
+
+/** `page` is what a translucent background is assumed to sit on (white unless the theme says otherwise). */
+export function contrast(fg: Rgb, bg: Rgb, page: Rgb = WHITE): ContrastResult {
   const uncertain = (bg.alpha ?? 1) < 1;
-  const solidBg: Rgb = { ...bg, alpha: 1 };
+  const solidBg = uncertain ? flatten(bg, { ...page, alpha: 1 }) : { ...bg, alpha: 1 };
   return { ratio: wcagContrast(flatten(fg, solidBg), solidBg), uncertain };
 }
 
@@ -40,6 +43,11 @@ export function thresholds(size: TextSize, target: Level): Threshold[] {
   const list: Threshold[] = [{ criterion: '1.4.3', level: 'AA', min: size === 'large' ? 3 : 4.5 }];
   if (target === 'AAA') list.push({ criterion: '1.4.6', level: 'AAA', min: size === 'large' ? 4.5 : 7 });
   return list;
+}
+
+/** Records the criteria an evaluated pair counts toward, for the conformance report. */
+export function markCovered(covered: Set<string> | undefined, size: TextSize, target: Level): void {
+  for (const t of thresholds(size, target)) covered?.add(t.criterion);
 }
 
 /** First threshold the ratio misses, if any. */

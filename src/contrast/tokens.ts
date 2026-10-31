@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import type { ContrastPair } from '../config.js';
 import type { Finding } from '../types.js';
 import type { Level } from '../wcag.js';
-import { contrast, failedThreshold, parseColor, type TextSize } from './color.js';
+import { contrast, failedThreshold, markCovered, parseColor, type TextSize } from './color.js';
 import type { ThemeVars } from './css.js';
 import { resolveVars } from './css.js';
 
@@ -109,8 +109,22 @@ const BG = new RegExp(`${SEP}(bg|background|surface|canvas|backdrop|paper)${END}
 const FOCUS = new RegExp(`${SEP}(focus|ring)${END}`, 'i');
 const ON = new RegExp(`${SEP}on[-_]([\\w-]+)$`, 'i');
 const SKIP_FG = /disabled|inverse|inverted/i;
-// Backgrounds that only pair with their own `on-*` text, never with general body text.
-const SKIP_BG = /disabled|inverse|inverted|brand|accent|emphasis|strong|danger|error|success|warning|info|overlay|hover|active|pressed|selected|scrim/i;
+// shadcn convention: `muted-foreground` sits on `muted`. (`x-text`/`x-fg` usually mean text on the page.)
+const SUFFIX_FG = /^(.+?)[-._/]foreground$/i;
+// Words that don't narrow a background down: `color.bg.default`, `--background`, `surface-base` are the page itself.
+const NEUTRAL_WORDS = new Set(
+  'color colors colour bg background surface canvas paper backdrop default base primary page body app main sys ref semantic theme'.split(' '),
+);
+
+/** The main page background(s): every part of the name is a neutral word. */
+function isCoreBackground(name: string): boolean {
+  if (!BG.test(name)) return false;
+  return name
+    .replace(/^--/, '')
+    .split(/[-._/]/)
+    .filter(Boolean)
+    .every((part) => NEUTRAL_WORDS.has(part.toLowerCase()));
+}
 
 export interface PairCandidate {
   fg: Token;
@@ -128,50 +142,75 @@ export function pairTokens(tokens: Map<string, Token>, explicit: ContrastPair[],
     });
   }
   if (!autoPair) return [];
+  // Only pairs that are almost certainly used together, so auto-paired failures are real:
+  // `on-x` / `x-foreground` with `x`, and generic text and focus tokens with the main page background.
   const all = [...tokens.values()];
-  const bgs = all.filter((t) => BG.test(t.name) && !SKIP_BG.test(t.name) && !ON.test(t.name));
+  const core = all.filter((t) => isCoreBackground(t.name));
   const pairs: PairCandidate[] = [];
+  const add = (fg: Token, bg: Token | undefined, size: TextSize) => {
+    if (bg && bg !== fg) pairs.push({ fg, bg, size, explicit: false });
+  };
   for (const t of all) {
+    if (SKIP_FG.test(t.name)) continue;
     const on = ON.exec(t.name);
     if (on) {
-      // Material-style `on-primary` text sits on `primary`.
-      const base = t.name.slice(0, on.index + on[1].length) + on[2];
-      const bg = tokens.get(base) ?? all.find((b) => b !== t && b.name.endsWith(on[2]) && !ON.test(b.name));
-      if (bg) pairs.push({ fg: t, bg, size: 'normal', explicit: false });
+      add(t, tokens.get(t.name.slice(0, on.index + on[1].length) + on[2]), 'normal');
       continue;
     }
-    if (FG.test(t.name) && !SKIP_FG.test(t.name) && !BG.test(t.name)) {
-      for (const bg of bgs) pairs.push({ fg: t, bg, size: 'normal', explicit: false });
-    } else if (FOCUS.test(t.name) && !BG.test(t.name)) {
-      for (const bg of bgs) pairs.push({ fg: t, bg, size: 'ui', explicit: false });
+    if (t.name === 'foreground') {
+      add(t, tokens.get('background'), 'normal');
+      continue;
     }
+    const suffix = SUFFIX_FG.exec(t.name);
+    const own = suffix && tokens.get(suffix[1]);
+    if (own && !BG.test(own.name)) {
+      add(t, own, 'normal');
+      // Muted/secondary text is also used straight on the page.
+      if (/muted|secondary|subtle/i.test(suffix![1])) for (const bg of core) add(t, bg, 'normal');
+      continue;
+    }
+    if (FG.test(t.name) && !BG.test(t.name)) for (const bg of core) add(t, bg, 'normal');
+    else if (FOCUS.test(t.name) && !BG.test(t.name)) for (const bg of core) add(t, bg, 'ui');
   }
   return pairs;
 }
 
-export function checkTokens(set: TokenSet, opts: { target: Level; pairs: ContrastPair[]; autoPair: boolean }): Finding[] {
-  const findings: Finding[] = [];
+export function checkTokens(set: TokenSet, opts: { target: Level; pairs: ContrastPair[]; autoPair: boolean; covered?: Set<string> }): Finding[] {
+  // The same pair failing with the same colours in several themes is reported once.
+  const failures = new Map<string, { finding: Finding; themes: string[] }>();
   for (const [theme, tokens] of set) {
     for (const pair of pairTokens(tokens, opts.pairs, opts.autoPair)) {
       const fg = parseColor(pair.fg.value)!;
       const bg = parseColor(pair.bg.value)!;
       const { ratio, uncertain } = contrast(fg, bg);
+      markCovered(opts.covered, pair.size, opts.target);
       const failed = failedThreshold(ratio, pair.size, opts.target);
       if (!failed) continue;
-      const themeNote = set.size > 1 ? ` [${theme}]` : '';
+      const key = `${pair.fg.name}|${pair.bg.name}|${pair.fg.value}|${pair.bg.value}`;
+      const existing = failures.get(key);
+      if (existing) {
+        existing.themes.push(theme);
+        continue;
+      }
       const autoNote = pair.explicit ? '' : ' (auto-paired; set contrast.pairs to declare real pairs)';
-      findings.push({
-        ruleId: pair.size === 'ui' ? 'token-focus-contrast' : 'token-contrast',
-        criteria: [failed.criterion],
-        level: failed.level,
-        status: uncertain ? 'unknown' : 'fail',
-        message: `${pair.fg.name} on ${pair.bg.name}${themeNote}: ${ratio.toFixed(2)}:1, needs ${failed.min}:1${autoNote}.`,
-        file: pair.fg.file,
-        line: pair.fg.line,
-        column: 1,
-        source: 'contrast',
+      failures.set(key, {
+        themes: [theme],
+        finding: {
+          ruleId: pair.size === 'ui' ? 'token-focus-contrast' : 'token-contrast',
+          criteria: [failed.criterion],
+          level: failed.level,
+          status: uncertain ? 'unknown' : 'fail',
+          message: `${pair.fg.name} on ${pair.bg.name}{themes}: ${ratio.toFixed(2)}:1, needs ${failed.min}:1${autoNote}.`,
+          file: pair.fg.file,
+          line: pair.fg.line,
+          column: 1,
+          source: 'contrast',
+        },
       });
     }
   }
-  return findings;
+  return [...failures.values()].map(({ finding, themes }) => ({
+    ...finding,
+    message: finding.message.replace('{themes}', set.size > 1 ? ` [${themes.join(', ')}]` : ''),
+  }));
 }

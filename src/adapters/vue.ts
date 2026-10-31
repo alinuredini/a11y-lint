@@ -1,6 +1,6 @@
 import { parse } from '@vue/compiler-sfc';
-import { appendChild, DYNAMIC, element, extractStyles, staticAttr, type IRDocument, type IRElement } from '../ir.js';
-import { isComponentName, setAttr } from './common.js';
+import { appendChild, element, extractStyles, setDynamicContent, staticAttr, type IRDocument, type IRElement } from '../ir.js';
+import { exprAttr, isComponentName, setAttr } from './common.js';
 
 // @vue/compiler-core NodeTypes / ElementTypes
 const ELEMENT = 1;
@@ -41,9 +41,9 @@ function convertElement(node: VueNode): IRElement {
     const arg: string | undefined = prop.arg?.isStatic ? prop.arg.content : undefined;
     if (prop.name === 'bind') {
       if (!prop.arg) el.hasSpread = true;
-      else if (arg) setAttr(el, arg.replace(/^attr\./, ''), DYNAMIC);
+      else if (arg) setAttr(el, arg.replace(/^attr\./, ''), exprAttr(prop.exp?.content));
     } else if (prop.name === 'on' && arg) el.events.add(arg.toLowerCase());
-    else if (prop.name === 'text' || prop.name === 'html') appendChild(el, { type: 'text', value: '', dynamic: true });
+    else if (prop.name === 'text' || prop.name === 'html') setDynamicContent(el);
   }
   convertChildren(node.children, el);
   return el;

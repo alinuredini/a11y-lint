@@ -1,6 +1,6 @@
 import { parseTemplate } from '@angular/compiler';
-import { appendChild, DYNAMIC, element, staticAttr, type IRDocument, type IRElement } from '../ir.js';
-import { isComponentName, setAttr } from './common.js';
+import { appendChild, element, setDynamicContent, staticAttr, type IRDocument, type IRElement } from '../ir.js';
+import { exprAttr, isComponentName, setAttr } from './common.js';
 
 type NgNode = { [key: string]: any };
 
@@ -44,7 +44,9 @@ function convertElement(node: NgNode): IRElement {
   el.isComponent = isComponentName(name) || name.startsWith('ng-');
   for (const a of node.attributes) setAttr(el, a.name, staticAttr(a.value));
   for (const input of node.inputs) {
-    if (input.type === BINDING_PROPERTY || input.type === BINDING_ATTRIBUTE) setAttr(el, input.name, DYNAMIC);
+    if (input.type !== BINDING_PROPERTY && input.type !== BINDING_ATTRIBUTE) continue;
+    if (['innerHTML', 'textContent', 'innerText'].includes(input.name)) setDynamicContent(el);
+    else setAttr(el, input.name, exprAttr(input.value?.source ?? undefined));
   }
   for (const output of node.outputs) el.events.add(String(output.name).toLowerCase());
   convertNodes(node.children, el);

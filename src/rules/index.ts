@@ -1,4 +1,4 @@
-import { getStatic, walk, type IRElement } from '../ir.js';
+import { getStatic, walk, type AttrValue, type IRElement } from '../ir.js';
 import type { Rule } from '../types.js';
 import {
   ARIA_ATTRS,
@@ -15,8 +15,11 @@ import {
   authorName,
   classes,
   hasValue,
+  isAriaHidden,
   isHidden,
   isNativelyFocusable,
+  inHiddenSubtree,
+  containsInteractive,
   or,
   roleOf,
   staticText,
@@ -44,9 +47,9 @@ export const rules: Rule[] = [
     criteria: ['1.1.1'],
     check(el, ctx) {
       const isImage = el.tag === 'img' || el.tag === 'area' || (el.tag === 'input' && getStatic(el, 'type') === 'image');
-      if (!isImage) return;
+      if (!isImage || inHiddenSubtree(el)) return;
       const role = roleOf(el);
-      if (el.tag === 'img' && (role === 'presentation' || role === 'none' || getStatic(el, 'aria-hidden') === 'true')) return;
+      if (el.tag === 'img' && (role === 'presentation' || role === 'none' || isAriaHidden(el))) return;
       const alt = el.attrs.get('alt');
       if (alt || authorName(el) === 'yes') return;
       if (el.hasSpread || authorName(el) === 'unknown') ctx.report(el, 'unknown', `${describe(el)} has no alt; check the spread props provide one.`);
@@ -80,6 +83,7 @@ export const rules: Rule[] = [
     description: 'Buttons need an accessible name.',
     criteria: ['4.1.2'],
     check(el, ctx) {
+      if (inHiddenSubtree(el)) return;
       let name: Tri;
       if (el.tag === 'button' || (roleOf(el) === 'button' && el.tag !== 'input')) name = accessibleName(el);
       else if (el.tag === 'input' && getStatic(el, 'type') === 'button') name = or(hasValue(el.attrs.get('value')), authorName(el));
@@ -93,7 +97,7 @@ export const rules: Rule[] = [
     description: 'Links need an accessible name.',
     criteria: ['2.4.4', '4.1.2'],
     check(el, ctx) {
-      if (!((el.tag === 'a' && el.attrs.has('href')) || roleOf(el) === 'link')) return;
+      if (!((el.tag === 'a' && el.attrs.has('href')) || roleOf(el) === 'link') || inHiddenSubtree(el)) return;
       const name = accessibleName(el);
       if (name === 'no') ctx.report(el, 'fail', `${describe(el)} has no accessible name. Add text or aria-label.`);
       else if (name === 'unknown' && hasOnlyComponentContent(el)) ctx.report(el, 'unknown', `${describe(el)} contains only components (an icon?); verify they render text or add aria-label.`);
@@ -101,6 +105,7 @@ export const rules: Rule[] = [
   },
   {
     id: 'link-text-generic',
+    partial: true,
     description: 'Link text should make sense out of context.',
     criteria: ['2.4.4', '2.4.9'],
     check(el, ctx) {
@@ -120,20 +125,24 @@ export const rules: Rule[] = [
     checkDocument(ctx) {
       const labelFor = new Set<string>();
       let dynamicFor = false;
+      // `<label for={id}>` matches `<input id={id}>` when both use the same expression.
+      const key = (v: AttrValue) => (v.kind === 'static' ? v.value : v.expr ? `{${v.expr}}` : undefined);
       for (const el of walk(ctx.doc.root)) {
         if (el.tag !== 'label') continue;
         const f = el.attrs.get('for');
-        if (f?.kind === 'static') labelFor.add(f.value);
-        else if (f) dynamicFor = true;
+        const k = f && key(f);
+        if (k) labelFor.add(k);
+        if (f?.kind === 'dynamic') dynamicFor = true;
       }
       for (const el of walk(ctx.doc.root)) {
         if (el.isComponent || !LABELLABLE.has(el.tag)) continue;
         if (el.tag === 'input' && NO_LABEL_INPUT_TYPES.has(getStatic(el, 'type') ?? '')) continue;
-        if (isHidden(el)) continue;
+        if (isHidden(el) || inHiddenSubtree(el)) continue;
         let name = authorName(el);
         if ([...ancestors(el)].some((a) => a.tag === 'label')) name = 'yes';
         const id = el.attrs.get('id');
-        if (id?.kind === 'static' && labelFor.has(id.value)) name = 'yes';
+        const idKey = id && key(id);
+        if (idKey && labelFor.has(idKey)) name = 'yes';
         if (name === 'no' && ((id?.kind === 'dynamic' && labelFor.size + Number(dynamicFor) > 0) || (id && dynamicFor))) name = 'unknown';
         if (name === 'no' && (el.hasSpread || el.parent?.isComponent)) name = 'unknown';
         if (name === 'yes') continue;
@@ -156,6 +165,10 @@ export const rules: Rule[] = [
       if (role === 'presentation' || role === 'none') return;
       const ti = tabindex(el);
       if (ti === undefined || (typeof ti === 'number' && ti < 0)) {
+        if (hasPointer && !interactiveRole && containsInteractive(el)) {
+          ctx.report(el, 'unknown', `${describe(el)} has a click handler and contains controls (a backdrop or clickable row?). Make sure keyboard users have another way to do the same thing.`);
+          return;
+        }
         ctx.report(el, el.hasSpread ? 'unknown' : 'fail', `${describe(el)} ${hasPointer ? 'has a click handler' : `has role="${role}"`} but is not keyboard focusable. Use a <button>, or add tabindex="0".`);
         return;
       }
@@ -173,7 +186,7 @@ export const rules: Rule[] = [
       if (!POINTER_EVENTS.some((e) => el.events.has(e))) return;
       const role = roleOf(el);
       if (role && INTERACTIVE_ROLES.has(role)) return;
-      if (el.attrs.get('role')?.kind === 'dynamic' || el.hasSpread) return;
+      if (el.attrs.get('role')?.kind === 'dynamic' || el.hasSpread || containsInteractive(el)) return;
       ctx.report(el, 'fail', `Clickable ${describe(el)} has no widget role, so assistive tech does not announce it as interactive.`);
     },
   },
@@ -191,7 +204,7 @@ export const rules: Rule[] = [
     description: 'aria-hidden elements must not be focusable.',
     criteria: ['4.1.2'],
     check(el, ctx) {
-      if (getStatic(el, 'aria-hidden') !== 'true') return;
+      if (!isAriaHidden(el)) return;
       const ti = tabindex(el);
       if ((isNativelyFocusable(el) && ti !== -1) || (typeof ti === 'number' && ti >= 0)) {
         ctx.report(el, 'fail', `${describe(el)} is aria-hidden but still focusable.`);
@@ -361,7 +374,7 @@ export const rules: Rule[] = [
     description: 'iframes need a title.',
     criteria: ['4.1.2'],
     check(el, ctx) {
-      if (el.tag !== 'iframe' || getStatic(el, 'aria-hidden') === 'true' || tabindex(el) === -1) return;
+      if (el.tag !== 'iframe' || isAriaHidden(el) || tabindex(el) === -1) return;
       const name = authorName(el);
       if (name === 'no' && !el.hasSpread) ctx.report(el, 'fail', '<iframe> needs a title describing its content.');
     },
@@ -414,6 +427,7 @@ export const rules: Rule[] = [
   },
   {
     id: 'autocomplete-missing',
+    partial: true,
     description: 'Fields collecting personal data should declare their purpose.',
     criteria: ['1.3.5'],
     check(el, ctx) {
@@ -427,6 +441,7 @@ export const rules: Rule[] = [
   },
   {
     id: 'focus-outline-removed',
+    partial: true,
     description: 'Removing the focus outline needs a visible replacement.',
     criteria: ['2.4.7'],
     check(el, ctx) {

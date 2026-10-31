@@ -71,12 +71,27 @@ export async function lintStatic(cwd: string, config: Config, paths: string[] = 
   return result;
 }
 
-/** Treats configured components as the element they render, e.g. `Link` → `a[href]`. */
+/** Renderers whose components are not DOM elements, so `Image` or `Link` there is not `<img>`/`<a>`. */
+const NON_DOM_SOURCES = /^(react-native(-.*)?|@react-native\/.*|expo-.*|@react-pdf\/.*|@react-three\/.*|ink|@react-email\/.*)$/;
+
+/**
+ * Treats configured components as the element they render, e.g. `Link` → `a[href]`.
+ * Components defined in the same file fall back to their root tag; their props may set any
+ * attribute, so they are marked as spread.
+ */
 export function applyComponentMap(doc: IRDocument, map: Record<string, string>): void {
   for (const el of walk(doc.root)) {
     if (!el.isComponent) continue;
+    if (el.importSource && NON_DOM_SOURCES.test(el.importSource)) continue;
     const spec = map[el.rawName];
-    if (!spec) continue;
+    if (!spec) {
+      if (el.localTag) {
+        el.tag = el.localTag;
+        el.isComponent = false;
+        el.hasSpread = true;
+      }
+      continue;
+    }
     const m = /^([a-z][a-z0-9-]*)((?:\[[a-z-]+\])*)$/i.exec(spec);
     if (!m) continue;
     el.tag = m[1].toLowerCase();

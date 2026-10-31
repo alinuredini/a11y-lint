@@ -2,11 +2,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { walk, type IRDocument, type IRElement } from '../ir.js';
-import { classes } from '../rules/helpers.js';
+import { classes, isAriaHidden } from '../rules/helpers.js';
 import type { Finding } from '../types.js';
 import type { Level } from '../wcag.js';
 import type { Rgb } from 'culori';
-import { contrast, failedThreshold, parseColor } from './color.js';
+import { contrast, failedThreshold, markCovered, parseColor } from './color.js';
 import { resolveVars, type Stylesheet, type ThemeVars } from './css.js';
 
 /** True when the project depends on Tailwind CSS. */
@@ -31,8 +31,8 @@ export function tailwindTheme(cwd: string): Stylesheet | undefined {
 }
 
 interface Paint {
-  fg?: string;
-  bg?: string;
+  fg?: Rgb;
+  bg?: Rgb;
 }
 
 const SIZES = ['xs', 'sm', 'base', 'lg', 'xl', '2xl', '3xl', '4xl', '5xl', '6xl', '7xl', '8xl', '9xl'];
@@ -50,19 +50,23 @@ function utilityColor(name: string, vars: ThemeVars, theme: string): Rgb | undef
   return { ...rgb, alpha: (rgb.alpha ?? 1) * alpha };
 }
 
-function paintOf(el: IRElement, theme: string): Paint {
+/** Text colour and background set on this element. Classes that aren't colours (`text-sm`, `bg-cover`) are skipped. */
+function paintOf(el: IRElement, theme: string, vars: ThemeVars): Paint {
   const paint: Paint = {};
+  const fromVariant: Paint = {};
   for (const cls of classes(el) ?? []) {
     const m = /^(?:(dark):)?(text|bg)-(.+)$/.exec(cls);
     if (!m) continue;
     const [, variant, kind, value] = m;
-    // Base classes apply in every theme; `dark:` ones override them in the dark theme.
     if (variant && variant !== theme) continue;
-    if (!variant && (kind === 'text' ? paint.fg : paint.bg) && theme !== 'default') continue;
-    if (kind === 'text') paint.fg = value;
-    else paint.bg = value;
+    const color = utilityColor(value, vars, theme);
+    if (!color) continue;
+    const key = kind === 'text' ? 'fg' : 'bg';
+    // `dark:` classes override base classes in the dark theme, whatever their order.
+    if (variant) fromVariant[key] = color;
+    else paint[key] = color;
   }
-  return paint;
+  return { fg: fromVariant.fg ?? paint.fg, bg: fromVariant.bg ?? paint.bg };
 }
 
 function textSize(el: IRElement): 'normal' | 'large' {
@@ -82,27 +86,41 @@ function hasOwnText(el: IRElement): boolean {
   return el.children.some((c) => c.type === 'text' && (c.dynamic || c.value.trim() !== ''));
 }
 
+/** The theme's page background, for compositing translucent backgrounds like `bg-primary/10`. */
+function pageColor(vars: ThemeVars, theme: string): Rgb | undefined {
+  for (const name of ['--color-background', '--background', '--color-bg', '--bg']) {
+    const value = resolveVars(`var(${name})`, vars, theme);
+    const rgb = value && parseColor(value);
+    if (rgb && (rgb.alpha ?? 1) === 1) return rgb;
+  }
+  return theme === 'dark' ? { mode: 'rgb', r: 0, g: 0, b: 0 } : undefined;
+}
+
 /** Checks text elements whose colour and background both come from Tailwind classes in the same file. */
-export function checkTailwind(docs: IRDocument[], vars: ThemeVars, target: Level): Finding[] {
+export function checkTailwind(docs: IRDocument[], vars: ThemeVars, target: Level, covered?: Set<string>): Finding[] {
   const findings: Finding[] = [];
-  const themes = vars.has('dark') ? ['default', 'dark'] : ['default'];
+  const usesDarkClasses = docs.some((doc) => [...walk(doc.root)].some((el) => (classes(el) ?? []).some((c) => c.startsWith('dark:'))));
+  const themes = vars.has('dark') || usesDarkClasses ? ['default', 'dark'] : ['default'];
   for (const doc of docs) {
     for (const el of walk(doc.root)) {
       if (el.isComponent || !hasOwnText(el)) continue;
+      // Decorative (aria-hidden) subtrees are exempt.
+      if ([el, ...ancestorsOf(el)].some(isAriaHidden)) continue;
       let defaultRatio: number | undefined;
       for (const theme of themes) {
         // Text colour and background inherit independently: nearest ancestor that sets each wins.
         let fgc: Rgb | undefined;
         let bgc: Rgb | undefined;
         for (const node of [el, ...ancestorsOf(el)]) {
-          const paint = paintOf(node, theme);
-          if (paint.fg) fgc ??= utilityColor(paint.fg, vars, theme);
-          if (paint.bg) bgc ??= utilityColor(paint.bg, vars, theme);
+          const paint = paintOf(node, theme, vars);
+          fgc ??= paint.fg;
+          bgc ??= paint.bg;
           if (fgc && bgc) break;
         }
-        if (!fgc || !bgc) continue;
+        if (!fgc || !bgc || (bgc.alpha ?? 1) === 0) continue;
         const size = textSize(el);
-        const { ratio, uncertain } = contrast(fgc, bgc);
+        const { ratio, uncertain } = contrast(fgc, bgc, pageColor(vars, theme));
+        markCovered(covered, size, target);
         if (theme === 'default') defaultRatio = ratio;
         else if (ratio === defaultRatio) continue; // same colours in both themes: already reported
         const failed = failedThreshold(ratio, size, target);

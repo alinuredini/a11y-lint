@@ -3,6 +3,12 @@ import { getStatic, type AttrValue, type IRElement } from '../ir.js';
 /** Three-valued answer: rules only fail on `no`, and report `unknown` for review. */
 export type Tri = 'yes' | 'no' | 'unknown';
 
+/** `aria-hidden="true"`, or JSX `aria-hidden` with no value. */
+export function isAriaHidden(el: IRElement): boolean {
+  const v = getStatic(el, 'aria-hidden');
+  return v === 'true' || v === '';
+}
+
 export function or(a: Tri, b: Tri): Tri {
   if (a === 'yes' || b === 'yes') return 'yes';
   if (a === 'unknown' || b === 'unknown') return 'unknown';
@@ -11,7 +17,7 @@ export function or(a: Tri, b: Tri): Tri {
 
 export function hasValue(v: AttrValue | undefined): Tri {
   if (!v) return 'no';
-  if (v.kind === 'dynamic') return 'unknown';
+  if (v.kind === 'dynamic') return v.nonEmpty ? 'yes' : 'unknown';
   return v.value.trim() ? 'yes' : 'no';
 }
 
@@ -32,7 +38,7 @@ function contentName(el: IRElement): Tri {
   for (const child of el.children) {
     if (child.type === 'text') name = or(name, child.dynamic ? 'unknown' : child.value.trim() ? 'yes' : 'no');
     else if (child.isComponent) name = or(name, 'unknown');
-    else if (getStatic(child, 'aria-hidden') === 'true') continue;
+    else if (isAriaHidden(child)) continue;
     else if (child.tag === 'img' || child.tag === 'area') name = or(name, or(hasValue(child.attrs.get('alt')), authorName(child)));
     else if (child.tag === 'svg') name = or(name, svgName(child));
     else name = or(name, accessibleName(child));
@@ -56,7 +62,7 @@ export function staticText(el: IRElement): string | undefined {
       text += child.value;
     } else {
       if (child.isComponent) return undefined;
-      if (getStatic(child, 'aria-hidden') === 'true') continue;
+      if (isAriaHidden(child)) continue;
       const inner = staticText(child);
       if (inner === undefined) return undefined;
       text += ' ' + inner;
@@ -71,6 +77,35 @@ export function roleOf(el: IRElement): string | undefined {
 
 export function isHidden(el: IRElement): boolean {
   return el.attrs.get('type')?.kind === 'static' && getStatic(el, 'type') === 'hidden';
+}
+
+/** `hidden`, `display: none`, Tailwind `hidden`: not rendered, so not in the accessibility tree. */
+export function isNotRendered(el: IRElement): boolean {
+  return (
+    el.attrs.has('hidden') ||
+    isAriaHidden(el) ||
+    /display\s*:\s*none/.test(getStatic(el, 'style') ?? '') ||
+    // `hidden md:flex` is shown on wider screens, so only a bare `hidden` counts.
+    ((classes(el)?.includes('hidden') ?? false) && !classes(el)!.some((c) => /^[a-z0-9]+:(block|flex|grid|inline|inline-block|inline-flex|table|contents)$/.test(c)))
+  );
+}
+
+/** The element or an ancestor is not rendered; JS that reveals it usually fills in its content too. */
+export function inHiddenSubtree(el: IRElement): boolean {
+  return isNotRendered(el) || [...ancestors(el)].some(isNotRendered);
+}
+
+/** Has a focusable descendant: a backdrop or row whose click handler supplements real controls. */
+export function containsInteractive(el: IRElement): boolean {
+  return [...walkDescendants(el)].some((d) => isNativelyFocusable(d) || (d.isComponent && /button|link|input|select|checkbox|switch/i.test(d.rawName)));
+}
+
+function* walkDescendants(el: IRElement): Generator<IRElement> {
+  for (const c of el.children) {
+    if (c.type !== 'element') continue;
+    yield c;
+    yield* walkDescendants(c);
+  }
 }
 
 /** Natively keyboard-focusable elements. */

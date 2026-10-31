@@ -2,7 +2,7 @@ import postcss, { type AtRule, type Container, type Declaration, type Root, type
 import scss from 'postcss-scss';
 import type { Finding } from '../types.js';
 import type { Level } from '../wcag.js';
-import { contrast, failedThreshold, isLargeText, parseColor } from './color.js';
+import { contrast, failedThreshold, isLargeText, markCovered, parseColor } from './color.js';
 
 export interface Stylesheet {
   file: string;
@@ -107,14 +107,18 @@ function backgroundColor(value: string): string | undefined {
 export interface CssCheckOptions {
   target: Level;
   vars: ThemeVars;
+  /** Receives the criteria that were actually evaluated. */
+  covered?: Set<string>;
 }
 
 /** Contrast for rules that set both color and background, plus removed focus outlines. */
-export function checkStylesheet(sheet: Stylesheet, { target, vars }: CssCheckOptions): Finding[] {
+export function checkStylesheet(sheet: Stylesheet, { target, vars, covered }: CssCheckOptions): Finding[] {
   const findings: Finding[] = [];
   const root = parseSheet(sheet);
   if (!root) return findings;
   const themes = [...vars.keys()];
+  // A `:focus-within` rule that draws a ring or border can stand in for the removed outline.
+  const focusWithinReplacement = /:focus-within\s*\{[^}]*(box-shadow|border|outline\s*:\s*(?!none|0))/.test(sheet.css);
 
   root.walkRules((rule) => {
     const decls = new Map<string, string>();
@@ -130,13 +134,18 @@ export function checkStylesheet(sheet: Stylesheet, { target, vars }: CssCheckOpt
     if (fgRaw && bgRaw) {
       const size = isLargeText(fontPx(decls.get('font-size')), fontWeight(decls.get('font-weight'))) ? 'large' : 'normal';
       const usesVars = fgRaw.includes('var(') || bgRaw.includes('var(');
+      const seen = new Set<string>();
       for (const theme of usesVars ? themes : ['default']) {
         const fg = resolveVars(fgRaw, vars, theme);
         const bg = resolveVars(bgRaw, vars, theme);
         const fgc = fg && parseColor(fg);
         const bgc = bg && parseColor(bg);
-        if (!fgc || !bgc) continue;
+        // A fully transparent background shows whatever is behind it, which we can't know here.
+        if (!fgc || !bgc || (bgc.alpha ?? 1) === 0) continue;
+        if (seen.has(`${fg}|${bg}`)) continue; // same colours in another theme
+        seen.add(`${fg}|${bg}`);
         const { ratio, uncertain } = contrast(fgc, bgc);
+        markCovered(covered, size, target);
         const failed = failedThreshold(ratio, size, target);
         if (!failed) continue;
         const where = usesVars && themes.length > 1 ? ` (${theme} theme)` : '';
@@ -162,8 +171,10 @@ export function checkStylesheet(sheet: Stylesheet, { target, vars }: CssCheckOpt
             ruleId: 'focus-outline-removed',
             criteria: ['2.4.7'],
             level: 'AA',
-            status: 'fail',
-            message: `\`${rule.selector}\` removes the focus outline without a replacement style.`,
+            status: focusWithinReplacement ? 'unknown' : 'fail',
+            message: focusWithinReplacement
+              ? `\`${rule.selector}\` removes the focus outline; a :focus-within rule may replace it, verify.`
+              : `\`${rule.selector}\` removes the focus outline without a replacement style.`,
           });
         }
       }

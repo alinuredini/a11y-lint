@@ -88,3 +88,67 @@ describe('rules', () => {
     expect(html('<!doctype html><html lang="en"><head><title>Home</title></head><body><main><h1>Hi</h1></main></body></html>')).toEqual([]);
   });
 });
+
+describe('runtime values the adapters can still reason about', () => {
+  it('matches label for/id that share an expression (useId)', () => {
+    expect(jsx('<><label htmlFor={id}>Name</label><input id={id} /></>')).toEqual([]);
+    expect(jsx('<><label htmlFor={a}>Name</label><input id={b} /></>')).toEqual(['unknown form-label']);
+  });
+
+  it('treats template literals and ternaries with text as non-empty names', () => {
+    expect(jsx('<button aria-label={`Remove ${name}`}><X /></button>')).toEqual([]);
+    expect(jsx("<button aria-label={open ? 'Close' : 'Open'}><X /></button>")).toEqual([]);
+  });
+
+  it('treats dangerouslySetInnerHTML as content', () => {
+    expect(jsx('<h2 dangerouslySetInnerHTML={{ __html: t }} />')).toEqual([]);
+  });
+
+  it('resolves components defined in the same file to their root tag', () => {
+    const doc = parseJsx('t.tsx', `
+      function Field({ label, children }) { return <label>{label}{children}</label>; }
+      export const F = () => <Field label="Name"><input /></Field>;
+    `);
+    expect(lint(doc)).toEqual([]);
+  });
+
+  it('does not map React Native or react-pdf Image to <img>', () => {
+    const doc = parseJsx('t.tsx', `import { Image } from 'react-native';\nexport const A = () => <Image source={x} />;`);
+    expect(lint(doc)).toEqual([]);
+  });
+});
+
+describe('elements that are not rendered', () => {
+  it('does not require labels on hidden inputs', () => {
+    expect(jsx('<input type="file" className="hidden" />')).toEqual([]);
+    expect(html('<input type="file" hidden>')).toEqual([]);
+  });
+});
+
+describe('JSX details', () => {
+  it('treats valueless aria-hidden as true', () => {
+    expect(jsx('<button aria-hidden onClick={f}>x</button>')).toEqual(['fail aria-hidden-focusable']);
+    expect(jsx('<button aria-label="Save"><svg aria-hidden /></button>')).toEqual([]);
+  });
+
+  it('does not count .map() output as text', () => {
+    expect(jsx('<button>{icons.map((i) => <Icon key={i} />)}</button>')).toEqual(['unknown button-name']);
+  });
+});
+
+describe('containers and hidden content', () => {
+  it('reviews rather than fails click handlers on containers with controls', () => {
+    expect(html('<div onclick="close()"><div><button>Save</button></div></div>')).toEqual(['unknown click-needs-keyboard']);
+  });
+
+  it('skips name checks inside hidden subtrees', () => {
+    expect(html('<button hidden></button><div class="hidden"><a href="/x"></a></div>')).toEqual([]);
+  });
+});
+
+describe('event handlers', () => {
+  it('ignores handlers that only stop propagation', () => {
+    expect(jsx('<div onClick={(e) => e.stopPropagation()}>x</div>')).toEqual([]);
+    expect(jsx('<div onClick={(e: React.MouseEvent) => { e.stopPropagation(); }}>x</div>')).toEqual([]);
+  });
+});
