@@ -13,6 +13,14 @@
   ],
   "license": "MIT",
   "author": "Ali Nuredini",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alinuredini/a11y-lint.git"
+  },
+  "homepage": "https://github.com/alinuredini/a11y-lint#readme",
+  "bugs": {
+    "url": "https://github.com/alinuredini/a11y-lint/issues"
+  },
   "type": "module",
   "bin": {
     "a11y-lint": "dist/cli.js"
