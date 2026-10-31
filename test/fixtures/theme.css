@@ -1,0 +1,15 @@
+:root {
+  --text-body: #333333;
+  --bg-page: #ffffff;
+}
+.dark {
+  --text-body: #555555;
+  --bg-page: #1a1a1a;
+}
+.banner {
+  color: var(--text-body);
+  background-color: var(--bg-page);
+}
+.badge { color: #ffffff; background: #ffcc00; }
+a:focus { outline: none; }
+@keyframes spin { to { transform: rotate(360deg); } }

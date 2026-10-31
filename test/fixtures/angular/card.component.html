@@ -1,0 +1,15 @@
+<div class="card">
+  <img src="/hero.png" />
+  <div (click)="open()">Open</div>
+  <input type="text" placeholder="Search" />
+  <button><svg aria-hidden="true"></svg></button>
+  <a href="/docs">click here</a>
+  <label for="email">Email</label>
+  <input id="email" type="email" autocomplete="email" />
+  <button>{{ label }}</button>
+  <span tabindex="2">focus me</span>
+  <p class="text-gray-400 bg-white">Low contrast</p>
+  @for (i of items; track i) {
+    <img [src]="i" alt="" />
+  }
+</div>
