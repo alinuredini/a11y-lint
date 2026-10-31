@@ -2,12 +2,6 @@
   "name": "a11y-lint",
   "version": "0.1.0",
   "description": "Framework-agnostic WCAG 2.2 linter: static template rules, design-token contrast, runtime axe scans and a conformance report.",
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "tsx src/cli.ts"
-  },
   "keywords": [
     "accessibility",
     "a11y",
@@ -17,8 +11,39 @@
     "contrast",
     "design-tokens"
   ],
-  "author": "",
   "license": "MIT",
+  "author": "Ali Nuredini",
+  "type": "module",
+  "bin": {
+    "a11y-lint": "dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.map",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "tsx src/cli.ts",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
   "dependencies": {
     "@angular/compiler": "^22.2.4",
     "@astrojs/compiler": "^4.0.0",
@@ -31,26 +56,6 @@
     "svelte": "^5.57.3",
     "tinyglobby": "^0.2.17"
   },
-  "devDependencies": {
-    "@axe-core/playwright": "^4.14.0",
-    "@types/culori": "^4.0.1",
-    "@types/node": "^26.6.6",
-    "playwright": "^1.64.1",
-    "tailwindcss": "^4.3.3",
-    "tsx": "^4.23.15",
-    "typescript": "^7.0.2",
-    "vitest": "^5.0.5"
-  },
-  "type": "module",
-  "bin": {
-    "a11y-lint": "dist/cli.js"
-  },
-  "files": [
-    "dist"
-  ],
-  "engines": {
-    "node": ">=22"
-  },
   "peerDependencies": {
     "@axe-core/playwright": ">=4.8",
     "playwright": ">=1.40"
@@ -62,5 +67,15 @@
     "@axe-core/playwright": {
       "optional": true
     }
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
+    "@types/culori": "^4.0.1",
+    "@types/node": "^26.6.6",
+    "playwright": "^1.64.1",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
   }
 }

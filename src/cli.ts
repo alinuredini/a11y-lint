@@ -23,6 +23,7 @@ Options
   --runtime                 Run the runtime scan with urls from the config file
   --fail-on <fail|review|never>  When to exit with code 1 (default: fail)
   --init                    Write a starter ${CONFIG_FILE}
+  -v, --version
   -h, --help
 `;
 
@@ -41,10 +42,16 @@ async function main(): Promise<number> {
       'fail-on': { type: 'string', default: 'fail' },
       init: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
+      version: { type: 'boolean', short: 'v' },
     },
   });
+  const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version as string;
   if (values.help) {
     process.stdout.write(HELP);
+    return 0;
+  }
+  if (values.version) {
+    console.log(version);
     return 0;
   }
   const cwd = process.cwd();
@@ -68,7 +75,6 @@ async function main(): Promise<number> {
   const result = await run(cwd, config, { paths: positionals, runtime });
   for (const e of result.parseErrors) console.error(`Could not parse ${e.file}: ${e.message}`);
 
-  const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version as string;
   const body =
     values.format === 'json'
       ? JSON.stringify(result.findings, null, 2)
