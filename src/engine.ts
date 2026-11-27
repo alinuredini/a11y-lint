@@ -79,6 +79,7 @@ export async function lintStatic(cwd: string, config: Config, paths: string[] = 
 function inline(el: IRElement, def: ComponentDef): void {
   el.tag = def.tag;
   el.isComponent = false;
+  if (def.childrenDefault && !el.children.length && !el.attrs.has('children')) el.children.push({ ...def.childrenDefault });
   if (!def.forwardsProps) {
     el.attrs = new Map();
     el.events = new Set();

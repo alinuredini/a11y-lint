@@ -158,3 +158,23 @@ describe('disabled widgets', () => {
     expect(html('<span role="link" aria-disabled="true" aria-current="page">Here</span>')).toEqual([]);
   });
 });
+
+describe('component parameter defaults', () => {
+  it('counts a default value for children as the content a component renders', () => {
+    const usage = (params: string, body = '<a href={href}>{children}</a>', use = '<SkipLink href="#main" />') =>
+      lint(parseJsx('t.tsx', `export function SkipLink(${params}) { return ${body}; }\nexport const Page = () => ${use};`));
+    // The reproduction from the Kernel integration.
+    expect(usage(`{ href, children = 'Skip to main content' }: { href: string; children?: React.ReactNode }`)).toEqual([]);
+    expect(usage('{ href, children = `Skip` }')).toEqual([]);
+    // A default only known at runtime is treated like `{label}`: unknown text, never a failure.
+    expect(usage('{ href, children = t("skip") }')).toEqual([]);
+    expect(usage('{ href, children = label }')).toEqual([]);
+    expect(usage('{ href, children = <Icon /> }')).toEqual([]);
+    // No default, or an empty one: still nothing to name the link.
+    expect(usage('{ href, children }')).toEqual(['fail link-name']);
+    expect(usage(`{ href, children = '' }`)).toEqual(['fail link-name']);
+    // Children passed at the usage replace the default.
+    expect(usage(`{ href, children = 'Skip' }`, undefined, '<SkipLink href="#main"><img src="a.png" /></SkipLink>')).toEqual(['fail image-alt', 'fail link-name']);
+    expect(usage(`{ children = 'Save' }`, '<button type="button">{children}</button>', '<SkipLink />')).toEqual([]);
+  });
+});

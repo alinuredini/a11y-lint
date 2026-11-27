@@ -74,6 +74,8 @@ export interface ComponentDef {
   forwardsProps: boolean;
   /** The root renders content besides the usage's children (`{label}`, an inner `<span>`). */
   ownContent: boolean;
+  /** What `{children}` renders when a usage passes none: `children = 'Skip'` is known text, `children = label` is not. */
+  childrenDefault?: IRText;
 }
 
 export function definitionOf(root: IRElement, forwardsProps: boolean, ownContent: boolean): ComponentDef {
