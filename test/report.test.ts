@@ -2,7 +2,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG } from '../src/config.js';
 import { run } from '../src/index.js';
-import { renderMarkdown } from '../src/report/conformance.js';
+import { evaluate, renderMarkdown } from '../src/report/conformance.js';
 import { toSarif } from '../src/report/sarif.js';
 import { criteriaFor } from '../src/wcag.js';
 
@@ -43,6 +43,23 @@ describe('conformance report', () => {
     const md = renderMarkdown(result.conformanceInput, result.conformance);
     expect(md).toContain('Automated tools cannot prove conformance');
     expect(md).toContain('- [ ] [3.2.3 Consistent Navigation](https://www.w3.org/WAI/WCAG22/Understanding/consistent-navigation)');
+  });
+});
+
+describe('markdown escaping', () => {
+  it('never writes an element name as raw HTML', async () => {
+    const result = await run(fixtures, { ...DEFAULT_CONFIG, level: 'AA' }, { paths: ['jsx', 'theme.css'] });
+    const input = result.conformanceInput;
+    input.findings.push(
+      { ruleId: 'form-label', criteria: ['3.3.2'], level: 'A', status: 'fail', message: '<Input> has no label. Use <label for>, a wrapping <label> or aria-label.', file: 'a.tsx', line: 1, column: 1, source: 'static' },
+      { ruleId: 'form-label', criteria: ['3.3.2'], level: 'A', status: 'fail', message: '<textarea> has no label; `<p class="x">` is already code.', file: 'a.tsx', line: 2, column: 1, source: 'static' },
+    );
+    const md = renderMarkdown(input, evaluate(input));
+    expect(md).toContain('`<Input>` has no label. Use `<label for>`, a wrapping `<label>` or aria-label.');
+    expect(md).toContain('`<textarea>` has no label; `<p class="x">` is already code.');
+    expect(md).toContain('No `<video>`/`<audio>` found'); // the likely-not-applicable note
+    // Outside code spans, nothing in the report can be read as a tag (the leading `>` are blockquotes).
+    expect(md.replace(/`[^`\n]*`/g, '')).not.toMatch(/<[a-z/]/i);
   });
 });
 
