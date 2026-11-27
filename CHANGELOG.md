@@ -7,10 +7,11 @@ Found while integrating the linter into a component registry with three themes, 
 ### Fixed
 
 - **Theme scoping.** `:root[data-theme="x"].dark` was filed under theme `x`, so a theme's dark values overwrote its light ones. Light blocks of non-default themes were never evaluated, and dark values were checked against light defaults. Every combination of theme and mode is now its own scope (`default`, `dark`, `x`, `x dark`), read from classes, attributes, `prefers-color-scheme` and nested rules in any order. A scope takes missing values from its theme's block without a mode, then from the default theme in the same mode, then from `:root`.
-- **Default `children`.** A component declared with `children = 'Skip to main content'` and used without children was reported as having no accessible name. A literal default now counts as content; a default only known at runtime is unknown text, like `{label}`.
+- **Default `children`.** A component declared with `children = 'Skip to main content'` and used without children was reported as having no accessible name. A literal default now counts as content; an element default (`children = <Icon />`) is checked as that element; any other default is unknown text, like `{label}`.
 - **Keyboard trap.** The keyboard walk reported the focus containment of modal dialogs and open menus as a 2.1.2 failure. It now presses Escape first and reports a trap only if focus stays in the cycle.
 - **Focus visible on overlays.** A container that holds focus without being a tab stop (`tabindex="-1"`, focused by script) is a review item instead of a failure.
 - **Conformance report.** Element names such as `<input>` are written as code, and stray `<` and `{` are escaped, so the report renders in MDX and strict Markdown viewers.
+- **Runtime scan robustness.** A page that is already running axe itself (Storybook's a11y addon) no longer aborts the whole scan: the run waits and retries, and a page that still can't be scanned is a `page-load` review item.
 - A run that scanned no source files no longer marks media and form criteria as "likely not applicable".
 
 ### Added

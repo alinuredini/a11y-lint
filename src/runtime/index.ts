@@ -37,6 +37,18 @@ async function loadPlaywright() {
   }
 }
 
+/** The page may be running axe itself (Storybook's a11y addon does); wait for it and try again. */
+async function analyze<T>(run: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await run();
+    } catch (err) {
+      if (attempt === 4 || !/already running/i.test((err as Error).message)) throw err;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+}
+
 function storybookUrls(dir: string, base: string): string[] {
   const index = ['index.json', 'stories.json'].map((f) => resolve(dir, f)).find(existsSync);
   if (!index) throw new Error(`No index.json in ${dir}. Run "storybook build" first.`);
@@ -67,7 +79,7 @@ export async function scanRuntime(cwd: string, config: Config): Promise<RuntimeR
         await page.close();
         return findings;
       }
-      const axe = await new AxeBuilder({ page }).withTags(AXE_TAGS[config.level]).analyze();
+      const axe = await analyze(() => new AxeBuilder({ page }).withTags(AXE_TAGS[config.level]).analyze());
       for (const group of [axe.violations, axe.incomplete, axe.passes, axe.inapplicable]) {
         for (const rule of group) for (const c of criteriaFromTags(rule.tags)) result.covered.add(c);
       }
@@ -103,7 +115,12 @@ export async function scanRuntime(cwd: string, config: Config): Promise<RuntimeR
     const workers = Math.max(1, Math.min(Math.floor(config.runtime.concurrency) || 1, urls.length));
     await Promise.all(
       Array.from({ length: workers }, async () => {
-        for (const [i, url] of queue) perPage[i] = await scanPage(url);
+        for (const [i, url] of queue) {
+          // One page that can't be scanned is a review item, not the end of the run.
+          perPage[i] = await scanPage(url).catch((err: Error) => [
+            { ruleId: 'page-load', criteria: [], level: 'A' as const, status: 'unknown' as const, message: `Could not scan: ${err.message.split('\n')[0]}`, file: url, line: 1, column: 1, source: 'runtime' as const },
+          ]);
+        }
       }),
     );
     result.findings = perPage.flat();
