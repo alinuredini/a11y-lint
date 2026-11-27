@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (0.2.0)
+## 0.2.0
 
 Found while integrating the linter into a component registry with three themes, each with a light and a dark block.
 
