@@ -34,4 +34,13 @@ describe('runtime scan', () => {
     // The open menu (tabindex="-1") swallows Tab and shows no focus style of its own; Escape closes it.
     expect(await scan('menu.html')).toEqual(['unknown focus-visible']);
   }, 60_000);
+
+  it('finds the same things when pages are scanned in parallel', async () => {
+    const urls = ['page.html', 'modal.html', 'trap.html', 'menu.html'].map(fixture);
+    const scanAll = async (concurrency: number) =>
+      (await scanRuntime(process.cwd(), { ...DEFAULT_CONFIG, runtime: { ...DEFAULT_CONFIG.runtime, urls, concurrency } })).findings.map((f) => `${f.file} ${f.status} ${f.ruleId} ${f.message}`);
+    const serial = await scanAll(1);
+    expect(serial.length).toBeGreaterThan(4);
+    expect(await scanAll(4)).toEqual(serial);
+  }, 120_000);
 });

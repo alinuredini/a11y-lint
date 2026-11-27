@@ -38,6 +38,8 @@ export interface Config {
     /** Tab through each page checking focus visibility and keyboard traps. */
     keyboard: boolean;
     maxTabStops: number;
+    /** Pages scanned at the same time, each in its own tab. */
+    concurrency: number;
   };
 }
 
@@ -70,7 +72,7 @@ export const DEFAULT_CONFIG: Config = {
   },
   rules: {},
   contrast: { tokens: [], pairs: [], autoPair: true },
-  runtime: { urls: [], keyboard: true, maxTabStops: 100 },
+  runtime: { urls: [], keyboard: true, maxTabStops: 100, concurrency: 1 },
 };
 
 export const CONFIG_FILE = 'a11y-lint.config.json';

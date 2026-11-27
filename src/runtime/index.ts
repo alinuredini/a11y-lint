@@ -57,14 +57,15 @@ export async function scanRuntime(cwd: string, config: Config): Promise<RuntimeR
   const browser = await chromium.launch();
   try {
     const context = await browser.newContext();
-    for (const url of urls) {
+    const scanPage = async (url: string): Promise<Finding[]> => {
+      const findings: Finding[] = [];
       const page = await context.newPage();
       try {
         await page.goto(url, { waitUntil: 'networkidle', timeout: 30_000 });
       } catch (err) {
-        result.findings.push({ ruleId: 'page-load', criteria: [], level: 'A', status: 'unknown', message: `Could not load: ${(err as Error).message.split('\n')[0]}`, file: url, line: 1, column: 1, source: 'runtime' });
+        findings.push({ ruleId: 'page-load', criteria: [], level: 'A', status: 'unknown', message: `Could not load: ${(err as Error).message.split('\n')[0]}`, file: url, line: 1, column: 1, source: 'runtime' });
         await page.close();
-        continue;
+        return findings;
       }
       const axe = await new AxeBuilder({ page }).withTags(AXE_TAGS[config.level]).analyze();
       for (const group of [axe.violations, axe.incomplete, axe.passes, axe.inapplicable]) {
@@ -75,7 +76,7 @@ export async function scanRuntime(cwd: string, config: Config): Promise<RuntimeR
           const criteria = criteriaFromTags(rule.tags);
           if (!criteria.length) continue;
           for (const node of rule.nodes) {
-            result.findings.push({
+            findings.push({
               ruleId: `axe/${rule.id}`,
               criteria,
               level: levelOf(criteria),
@@ -90,11 +91,22 @@ export async function scanRuntime(cwd: string, config: Config): Promise<RuntimeR
         }
       }
       if (config.runtime.keyboard) {
-        for (const f of await keyboardWalk(page, url, config.runtime.maxTabStops)) result.findings.push(f);
+        findings.push(...(await keyboardWalk(page, url, config.runtime.maxTabStops)));
         for (const c of ['2.1.2', '2.4.7', '2.4.11']) result.covered.add(c);
       }
       await page.close();
-    }
+      return findings;
+    };
+    // A few pages at a time, each in its own tab; findings keep the order of `urls`.
+    const perPage: Finding[][] = [];
+    const queue = urls.entries();
+    const workers = Math.max(1, Math.min(Math.floor(config.runtime.concurrency) || 1, urls.length));
+    await Promise.all(
+      Array.from({ length: workers }, async () => {
+        for (const [i, url] of queue) perPage[i] = await scanPage(url);
+      }),
+    );
+    result.findings = perPage.flat();
   } finally {
     await browser.close();
     await server?.close();

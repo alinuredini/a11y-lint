@@ -46,6 +46,16 @@ describe('conformance report', () => {
   });
 });
 
+describe('runtime-only runs', () => {
+  it('claims no static coverage and rules nothing out when the source was not scanned', async () => {
+    // No urls: the browser starts and scans nothing, which is enough to see what the report claims.
+    const result = await run(fixtures, { ...DEFAULT_CONFIG, level: 'AA' }, { runtime: true, static: false });
+    expect(result.findings).toEqual([]);
+    expect(result.conformanceInput.filesScanned).toBe(0);
+    expect(new Set(result.conformance.map((r) => r.state))).toEqual(new Set(['manual']));
+  }, 60_000);
+});
+
 describe('markdown escaping', () => {
   it('never writes an element name as raw HTML', async () => {
     const result = await run(fixtures, { ...DEFAULT_CONFIG, level: 'AA' }, { paths: ['jsx', 'theme.css'] });
