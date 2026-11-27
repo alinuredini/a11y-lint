@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <title>Menu fixture</title>
+  <style>
+    button:focus-visible { outline: 3px solid #1a4fd6; }
+    [role="menu"] { width: 200px; padding: 8px; background: #fff; border: 1px solid #333; outline: none; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Menu fixture</h1>
+    <button>Actions</button>
+    <button>Other</button>
+  </main>
+  <!-- An open menu as headless libraries render it: focus sits on the container, Tab is swallowed, Escape closes. -->
+  <div role="menu" aria-label="Actions" tabindex="-1">
+    <div role="menuitem" tabindex="-1">Rename</div>
+    <div role="menuitem" tabindex="-1">Delete</div>
+  </div>
+  <script>
+    const menu = document.querySelector('[role="menu"]');
+    menu.focus();
+    menu.addEventListener('keydown', (e) => {
+      if (e.key === 'Tab') e.preventDefault();
+      if (e.key === 'Escape') { menu.remove(); document.querySelector('main button').focus(); }
+    });
+  </script>
+</body>
+</html>

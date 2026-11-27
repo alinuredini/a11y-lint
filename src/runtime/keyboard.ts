@@ -1,17 +1,23 @@
-import type { Page } from 'playwright';
+import type { JSHandle, Page } from 'playwright';
 import type { Finding } from '../types.js';
 
 const STYLE_PROPS = ['outlineStyle', 'outlineWidth', 'outlineColor', 'boxShadow', 'borderColor', 'backgroundColor', 'color', 'textDecorationLine'] as const;
+
+/** How long a closing overlay may take to move focus (exit animations). */
+const ESCAPE_TIMEOUT = 1500;
 
 interface Stop {
   selector: string;
   styles: string[];
   obscured: boolean;
+  /** Reachable with Tab; false for a container that was focused by script (`tabindex="-1"`). */
+  tabStop: boolean;
 }
 
 /**
  * Tabs through the page like a keyboard user. Flags focus traps (2.1.2), elements whose
  * style doesn't change on focus (2.4.7) and focused elements covered by other content (2.4.11).
+ * A cycle that Escape releases (a modal dialog, an open menu) is focus containment, not a trap.
  */
 export async function keyboardWalk(page: Page, url: string, maxStops: number): Promise<Finding[]> {
   const findings: Finding[] = [];
@@ -25,6 +31,7 @@ export async function keyboardWalk(page: Page, url: string, maxStops: number): P
 
   const stops: Stop[] = [];
   const seen = new Set<string>();
+  let cycleAt: Stop | undefined;
   for (let i = 0; i < maxStops; i++) {
     await page.keyboard.press('Tab');
     const stop = await page.evaluate((props) => {
@@ -43,6 +50,7 @@ export async function keyboardWalk(page: Page, url: string, maxStops: number): P
         selector: path.join(' > '),
         styles: props.map((p) => cs[p as keyof CSSStyleDeclaration] as string),
         obscured: r.width > 0 && !!top && !el.contains(top) && !top.contains(el),
+        tabStop: el.tabIndex >= 0,
       };
     }, STYLE_PROPS as unknown as string[]);
     if (!stop) {
@@ -50,14 +58,15 @@ export async function keyboardWalk(page: Page, url: string, maxStops: number): P
       continue;
     }
     if (seen.has(stop.selector)) {
-      if (seen.size < tabbable) {
-        findings.push({ ...base, ruleId: 'keyboard-trap', criteria: ['2.1.2'], level: 'A', status: 'fail', message: `Focus cycles back to ${stop.selector} after ${seen.size} of ${tabbable} focusable elements; keyboard users may be trapped.` });
-      }
+      if (seen.size < tabbable) cycleAt = stop;
       break;
     }
     seen.add(stop.selector);
     stops.push(stop);
   }
+
+  // Handles to the cycle's elements, taken before anything closes and the selectors stop matching.
+  const cycle = cycleAt && (await page.evaluateHandle((selectors) => selectors.map((s) => document.querySelector<HTMLElement>(s)), [cycleAt.selector, ...seen]));
 
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   for (const stop of stops) {
@@ -71,11 +80,40 @@ export async function keyboardWalk(page: Page, url: string, maxStops: number): P
       { selector: stop.selector, props: STYLE_PROPS as unknown as string[] },
     );
     if (unfocused && unfocused.every((v, i) => v === stop.styles[i])) {
-      findings.push({ ...base, ruleId: 'focus-visible', criteria: ['2.4.7'], level: 'AA', status: 'fail', message: `No visible style change when ${stop.selector} receives focus.` });
+      findings.push(
+        stop.tabStop
+          ? { ...base, ruleId: 'focus-visible', criteria: ['2.4.7'], level: 'AA', status: 'fail', message: `No visible style change when ${stop.selector} receives focus.` }
+          : // A dialog or menu container focused by script usually marks the focus position on its items instead.
+            { ...base, ruleId: 'focus-visible', criteria: ['2.4.7'], level: 'AA', status: 'unknown', message: `${stop.selector} holds focus without a visible style change, but is not a tab stop (focused by script); verify the focus position is visible inside it.` },
+      );
     }
     if (stop.obscured) {
       findings.push({ ...base, ruleId: 'focus-obscured', criteria: ['2.4.11'], level: 'AA', status: 'unknown', message: `${stop.selector} may be hidden behind other content when focused (sticky header, banner?).` });
     }
   }
+
+  if (cycleAt && cycle && !(await escapeReleases(page, cycle))) {
+    findings.unshift({ ...base, ruleId: 'keyboard-trap', criteria: ['2.1.2'], level: 'A', status: 'fail', message: `Focus cycles back to ${cycleAt.selector} after ${seen.size} of ${tabbable} focusable elements and Escape does not release it; keyboard users may be trapped.` });
+  }
   return findings;
+}
+
+/** Puts focus back into the cycle and presses Escape: true when focus leaves the cycle or its container closes. */
+async function escapeReleases(page: Page, cycle: JSHandle<(HTMLElement | null)[]>): Promise<boolean> {
+  const present = await page.evaluate(([first]) => {
+    first?.focus();
+    return !!first && document.activeElement === first;
+  }, cycle);
+  if (!present) return true; // already gone
+  await page.keyboard.press('Escape');
+  return page
+    .waitForFunction(
+      (els) => {
+        const active = document.activeElement as HTMLElement | null;
+        return !active || !els.includes(active) || active.getClientRects().length === 0;
+      },
+      cycle,
+      { timeout: ESCAPE_TIMEOUT },
+    )
+    .then(() => true, () => false);
 }
