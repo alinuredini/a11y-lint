@@ -7,6 +7,13 @@ export interface ContrastPair {
   bg: string;
   /** `large`: 18pt / 14pt bold text. `ui`: non-text UI component or focus indicator (3:1). */
   size?: 'normal' | 'large' | 'ui';
+  /**
+   * Limits the pair to one theme and/or mode. `theme` is the name in `[data-theme="x"]` or a token-file key
+   * (`default` for `:root`); `mode` is `light`, `dark` or `high-contrast`. Without it the pair is checked everywhere.
+   */
+  scope?: { theme?: string; mode?: string };
+  /** Free text for people reading the config, such as why the pair is scoped. Ignored by the linter. */
+  note?: string;
 }
 
 export interface Config {

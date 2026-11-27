@@ -166,4 +166,22 @@ describe('theme and mode scopes', () => {
     expect(value(css, 'a dark', 'accent')).toBe('#0a0'); // theme light block, default never overrides it
     expect(value(css, 'dark', 'accent')).toBe('#00f');
   });
+
+  it('scopes a declared pair to a theme and/or a mode', () => {
+    const tokens = varsAsTokens(collectVars(sheet(`
+      :root { --bg: #fff; --hint: #999; }
+      :root.dark { --bg: #000; }
+      [data-theme='a'] { --hint: #aaa; }
+      [data-theme='a'].dark { --hint: #333; }
+    `)));
+    const check = (scope?: { theme?: string; mode?: string }) =>
+      checkTokens(tokens, { target: 'AA', pairs: [{ fg: 'hint', bg: 'bg', scope }], autoPair: true }).map((f) => f.message.split(':')[0]);
+    expect(check()).toEqual(['hint on bg [default]', 'hint on bg [a]', 'hint on bg [a dark]']);
+    expect(check({ theme: 'a' })).toEqual(['hint on bg [a]', 'hint on bg [a dark]']);
+    expect(check({ mode: 'dark' })).toEqual(['hint on bg [a dark]']);
+    expect(check({ mode: 'light' })).toEqual(['hint on bg [default]', 'hint on bg [a]']);
+    expect(check({ theme: 'default' })).toEqual(['hint on bg [default]']);
+    expect(check({ theme: 'a', mode: 'light' })).toEqual(['hint on bg [a]']);
+    expect(check({ theme: 'nope' })).toEqual([]);
+  });
 });
