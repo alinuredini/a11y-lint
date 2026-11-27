@@ -5,7 +5,7 @@ import type { Finding } from '../types.js';
 import type { Level } from '../wcag.js';
 import { contrast, failedThreshold, markCovered, parseColor, type TextSize } from './color.js';
 import type { ThemeVars } from './css.js';
-import { resolveVars } from './css.js';
+import { resolveVars, scopeOfKey } from './css.js';
 
 export interface Token {
   name: string;
@@ -133,9 +133,11 @@ export interface PairCandidate {
   explicit: boolean;
 }
 
-export function pairTokens(tokens: Map<string, Token>, explicit: ContrastPair[], autoPair: boolean): PairCandidate[] {
+/** `scope` is the theme and mode of this token set; pairs declared for another theme or mode are skipped. */
+export function pairTokens(tokens: Map<string, Token>, explicit: ContrastPair[], autoPair: boolean, scope?: { theme: string; mode: string }): PairCandidate[] {
   if (explicit.length) {
     return explicit.flatMap((p) => {
+      if (scope && ((p.scope?.theme ?? scope.theme) !== scope.theme || (p.scope?.mode ?? scope.mode) !== scope.mode)) return [];
       const fg = tokens.get(p.fg);
       const bg = tokens.get(p.bg);
       return fg && bg ? [{ fg, bg, size: p.size ?? 'normal', explicit: true }] : [];
@@ -179,7 +181,7 @@ export function checkTokens(set: TokenSet, opts: { target: Level; pairs: Contras
   // The same pair failing with the same colours in several themes is reported once.
   const failures = new Map<string, { finding: Finding; themes: string[] }>();
   for (const [theme, tokens] of set) {
-    for (const pair of pairTokens(tokens, opts.pairs, opts.autoPair)) {
+    for (const pair of pairTokens(tokens, opts.pairs, opts.autoPair, scopeOfKey(theme))) {
       const fg = parseColor(pair.fg.value)!;
       const bg = parseColor(pair.bg.value)!;
       const { ratio, uncertain } = contrast(fg, bg);
