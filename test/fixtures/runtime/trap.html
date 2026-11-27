@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <title>Trap fixture</title>
+  <style>
+    button:focus-visible { outline: 3px solid #1a4fd6; }
+    [role="dialog"] { position: fixed; inset: 20% 30%; padding: 16px; background: #fff; border: 1px solid #333; outline: none; }
+  </style>
+</head>
+<body>
+  <main aria-hidden="true">
+    <h1>Trap fixture</h1>
+    <button tabindex="-1">Open</button>
+    <button tabindex="-1">Other</button>
+    <button tabindex="-1">Third</button>
+  </main>
+  <!-- Contains focus by design, like a Radix or native modal, and closes on Escape. -->
+  <div role="dialog" aria-modal="true" aria-label="Confirm" tabindex="-1">
+    <button id="yes">Yes</button>
+    <button id="no">No</button>
+  </div>
+  <script>
+    const dialog = document.querySelector('[role="dialog"]');
+    const buttons = [...dialog.querySelectorAll('button')];
+    document.querySelectorAll('main button').forEach((b) => (b.tabIndex = 0)); // focusable, but behind the modal
+    dialog.focus();
+    dialog.addEventListener('keydown', (e) => {
+      if (e.key === "Escape") { return; /* no way out */
+        // Leaves after a short exit animation, as component libraries do.
+        setTimeout(() => { dialog.remove(); document.querySelector('main').removeAttribute('aria-hidden'); document.querySelector('main button').focus(); }, 150);
+      }
+      if (e.key !== 'Tab') return;
+      e.preventDefault();
+      const i = buttons.indexOf(document.activeElement);
+      buttons[(i + (e.shiftKey ? buttons.length - 1 : 1)) % buttons.length].focus();
+    });
+  </script>
+</body>
+</html>
