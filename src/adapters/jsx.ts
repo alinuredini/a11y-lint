@@ -186,7 +186,26 @@ function componentDef(fn: Node | undefined, ctx: Context): ComponentDef | undefi
   if (!tag) tag = primitiveDef(el.importSource, el.importName)?.tag; // `<LabelPrimitive.Root>`
   if (!tag) return undefined;
   el.tag = tag;
-  return definitionOf(el, el.hasSpread, root.children.some(isOwnContent));
+  const def = definitionOf(el, el.hasSpread, root.children.some(isOwnContent));
+  if (root.children.some(isChildrenSlot)) def.childrenDefault = childrenDefault(fn);
+  return def;
+}
+
+function isChildrenSlot(child: Node): boolean {
+  return child.type === 'JSXExpressionContainer' && child.expression.type === 'Identifier' && child.expression.name === 'children';
+}
+
+/** `function Link({ children = 'Skip' })`: the default is the content when a usage has no children. */
+function childrenDefault(fn: Node): ComponentDef['childrenDefault'] {
+  const props = fn.params?.[0];
+  if (props?.type !== 'ObjectPattern') return undefined;
+  const prop = props.properties.find((p: Node) => p.type === 'ObjectProperty' && p.key.name === 'children' && p.value.type === 'AssignmentPattern');
+  if (!prop) return undefined;
+  const value: Node = prop.value.right;
+  if (value.type === 'StringLiteral') return { type: 'text', value: value.value, dynamic: false };
+  if (value.type === 'TemplateLiteral' && value.expressions.length === 0) return { type: 'text', value: value.quasis[0].value.cooked ?? '', dynamic: false };
+  if (value.type === 'NumericLiteral') return { type: 'text', value: String(value.value), dynamic: false };
+  return { type: 'text', value: '', dynamic: true };
 }
 
 /** Content a component renders itself, as opposed to passing through `{children}`. */
