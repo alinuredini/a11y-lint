@@ -2,7 +2,8 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { failedThreshold, parseColor, contrast } from '../src/contrast/color.js';
 import { checkContrast } from '../src/contrast/index.js';
-import { checkTokens, loadTokens, pairTokens } from '../src/contrast/tokens.js';
+import { collectVars } from '../src/contrast/css.js';
+import { checkTokens, loadTokens, pairTokens, varsAsTokens } from '../src/contrast/tokens.js';
 import { DEFAULT_CONFIG, type Config } from '../src/config.js';
 import { lintStatic } from '../src/engine.js';
 
@@ -108,5 +109,61 @@ describe('Tailwind v3 config', () => {
     const found = (await checkContrast(cwd, config, result)).findings.map((f) => `${f.line} ${f.message}`);
     // tailwindcss v3 isn't installed here, so only the config's own colours (plus white/black) resolve.
     expect(found).toEqual(['3 <p class="bg-brand text-brand-fg">: 1.67:1, needs 4.5:1.']);
+  });
+});
+
+describe('theme and mode scopes', () => {
+  const sheet = (css: string) => [{ file: 't.css', css, lang: 'css' as const }];
+  // The reproduction from the Kernel integration: status colours live in the default blocks only.
+  const kernel = `
+    :root { --bg: #fff; --fg: #000; --warn: #800000; }
+    :root.dark { --bg: #000; --fg: #fff; --warn: #ff9a9a; }
+    :root[data-theme='a'] { --bg: #fff; --fg: #000; }
+    :root[data-theme='a'].dark { --bg: #000; --fg: #fff; }
+  `;
+  const value = (css: string, scope: string, name: string) => varsAsTokens(collectVars(sheet(css))).get(scope)?.get(name)?.value;
+
+  it('keeps a theme and its dark block apart, inheriting from the default of the same mode', () => {
+    const vars = collectVars(sheet(kernel));
+    expect([...vars.keys()]).toEqual(['default', 'dark', 'a', 'a dark']);
+    expect(value(kernel, 'a', 'bg')).toBe('#fff');
+    expect(value(kernel, 'a', 'warn')).toBe('#800000');
+    expect(value(kernel, 'a dark', 'bg')).toBe('#000');
+    expect(value(kernel, 'a dark', 'warn')).toBe('#ff9a9a');
+    const findings = checkTokens(varsAsTokens(vars), { target: 'AA', pairs: [{ fg: 'warn', bg: 'bg' }], autoPair: true });
+    expect(findings).toEqual([]);
+  });
+
+  it('evaluates the light block of a non-default theme', () => {
+    const css = kernel.replace("[data-theme='a'] { --bg: #fff;", "[data-theme='a'] { --bg: #7a0000;");
+    const msgs = checkTokens(varsAsTokens(collectVars(sheet(css))), { target: 'AA', pairs: [{ fg: 'warn', bg: 'bg' }], autoPair: true }).map((f) => f.message);
+    expect(msgs).toEqual(['warn on bg [a]: 1.05:1, needs 4.5:1.']);
+  });
+
+  it('reads theme and mode in any order, from classes, attributes and prefers-color-scheme', () => {
+    const scopes = (css: string) => [...collectVars(sheet(css)).keys()].filter((k) => k !== 'default');
+    expect(scopes(`[data-theme="x"].dark { --a: #000; }`)).toEqual(['x dark']);
+    expect(scopes(`.dark[data-theme="x"] { --a: #000; }`)).toEqual(['x dark']);
+    expect(scopes(`.dark [data-theme="x"] { --a: #000; }`)).toEqual(['x dark']);
+    expect(scopes(`[data-theme="x"] .dark { --a: #000; }`)).toEqual(['x dark']);
+    expect(scopes(`.theme-x.dark { --a: #000; }`)).toEqual(['theme-x dark']);
+    expect(scopes(`[data-theme="x"][data-mode="dark"] { --a: #000; }`)).toEqual(['x dark']);
+    expect(scopes(`[data-theme="dark"] { --a: #000; }`)).toEqual(['dark']);
+    expect(scopes(`@media (prefers-color-scheme: dark) { :root { --a: #000; } [data-theme="x"] { --a: #111; } }`)).toEqual(['dark', 'x dark']);
+    expect(scopes(`:root { &.dark { --a: #000; } }`)).toEqual(['dark']);
+    // A component that happens to carry `.dark` is not a theme.
+    expect(scopes(`.card.dark { --a: #000; }`)).toEqual([]);
+  });
+
+  it('lets a theme light value reach its dark mode only when neither dark block redeclares it', () => {
+    const css = `
+      :root { --bg: #fff; --ink: #111; --accent: #00f; }
+      :root.dark { --bg: #000; --ink: #eee; }
+      [data-theme='a'] { --ink: #222; --accent: #0a0; }
+      [data-theme='a'].dark { --bg: #010101; }
+    `;
+    expect(value(css, 'a dark', 'bg')).toBe('#010101'); // own dark block
+    expect(value(css, 'a dark', 'accent')).toBe('#0a0'); // theme light block, default never overrides it
+    expect(value(css, 'dark', 'accent')).toBe('#00f');
   });
 });
