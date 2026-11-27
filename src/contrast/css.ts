@@ -18,8 +18,31 @@ export interface VarDef {
   line: number;
 }
 
-/** Custom properties per theme. `default` is `:root`; other themes override it. */
+/**
+ * Custom properties per scope, with the cascade already applied. A scope is one combination of
+ * theme and mode: `default` (`:root`), `dark`, `x` (`[data-theme="x"]`), `x dark`.
+ */
 export type ThemeVars = Map<string, Map<string, VarDef>>;
+
+/** One combination of theme selector and mode selector; both absent is `:root`. */
+export interface Scope {
+  theme?: string;
+  mode?: string;
+}
+
+const MODES = new Set(['dark', 'light', 'high-contrast']);
+
+export function scopeKey({ theme, mode }: Scope): string {
+  return [theme, mode].filter(Boolean).join(' ') || 'default';
+}
+
+/** `x dark` → theme `x`, mode `dark`. A scope without a mode selector is the light one. */
+export function scopeOfKey(key: string): { theme: string; mode: string } {
+  const words = key.split(' ');
+  const mode = MODES.has(words.at(-1)!) ? words.pop()! : 'light';
+  const theme = words.join(' ');
+  return { theme: theme && theme !== 'default' ? theme : 'default', mode };
+}
 
 export function parseSheet(sheet: Stylesheet): Root | undefined {
   try {
@@ -33,38 +56,76 @@ function lineOf(node: { source?: { start?: { line: number } } }, sheet: Styleshe
   return (node.source?.start?.line ?? 1) + (sheet.line ? sheet.line - 1 : 0);
 }
 
-/** Which theme a custom property declaration belongs to, or undefined for component-scoped vars. */
-function themeOf(decl: Declaration): string | undefined {
-  let theme: string | undefined;
+const THEME_ATTR = /\[data-[a-z-]*(?:theme|mode|scheme)[a-z-]*=["']?([\w-]+)["']?\]/gi;
+const THEME_CLASS = /\.(dark|light|high-contrast|theme-[\w-]+|[\w-]+-theme)(?![\w-])/g;
+
+/**
+ * The theme and mode one selector names, in any order and on any compound: `:root[data-theme="x"].dark`,
+ * `.dark [data-theme="x"]`. `{}` is the root itself; undefined is anything else (a component).
+ */
+function selectorScope(selector: string): Scope | undefined {
+  const scope: Scope = {};
+  const name = (value: string) => {
+    if (MODES.has(value)) scope.mode ??= value;
+    else scope.theme ??= value;
+  };
+  const withoutAttrs = selector.replace(THEME_ATTR, (_, value: string) => (name(value), ''));
+  // Theme classes only count when nothing else is selected, so `.card.dark` stays a component.
+  const classNames: string[] = [];
+  const rest = withoutAttrs.replace(THEME_CLASS, (_, cls: string) => (classNames.push(cls), '')).replace(/:root|:host|\bhtml\b|\bbody\b|[&\s>]/g, '');
+  if (rest === '') classNames.forEach(name);
+  if (scope.theme || scope.mode) return scope;
+  return /^(:root|html|:host|body)$/.test(selector.trim()) ? scope : undefined;
+}
+
+/** The scopes a custom property declaration belongs to; none for component-scoped vars. */
+function scopesOf(decl: Declaration): Scope[] {
+  let scopes: Scope[] | undefined;
+  let inTheme = false;
+  let mediaMode: string | undefined;
   for (let node: Container | undefined = decl.parent as Container; node; node = node.parent as Container | undefined) {
     if (node.type === 'atrule') {
       const at = node as AtRule;
-      if (at.name === 'theme') theme ??= 'default';
-      if (at.name === 'media' && /prefers-color-scheme:\s*dark/.test(at.params)) return 'dark';
+      if (at.name === 'theme') inTheme = true;
+      if (at.name === 'media' && /prefers-color-scheme:\s*dark/.test(at.params)) mediaMode = 'dark';
     } else if (node.type === 'rule') {
-      const selectors = (node as CssRule).selectors;
-      for (const sel of selectors) {
-        const named = /\[data-[a-z-]*(?:theme|mode|scheme)[a-z-]*=["']?([\w-]+)/i.exec(sel) ?? /^(?::root|html|body)?\.(dark|light|high-contrast|theme-[\w-]+|[\w-]+-theme)$/.exec(sel.trim());
-        if (named) return named[1];
-        if (/^(:root|html|:host|body)$/.test(sel.trim())) theme ??= 'default';
+      const own = (node as CssRule).selectors.flatMap((sel) => selectorScope(sel) ?? []);
+      if (!own.length) {
+        if (!scopes && !inTheme) return [];
+        continue;
       }
-      if (theme === undefined) return undefined;
+      // Nested rules: the inner selector's theme and mode win over the outer one's.
+      scopes = scopes ? scopes.flatMap((inner) => own.map((outer) => ({ theme: inner.theme ?? outer.theme, mode: inner.mode ?? outer.mode }))) : own;
     }
   }
-  return theme;
+  if (!scopes && !inTheme) return [];
+  return (scopes ?? [{}]).map((s) => ({ theme: s.theme, mode: s.mode ?? mediaMode }));
 }
 
-export function collectVars(sheets: Stylesheet[], vars: ThemeVars = new Map()): ThemeVars {
+/**
+ * Collects custom properties and resolves them per scope the way the cascade does: a scope's own
+ * block first, then its theme's block without a mode, then the default theme in the same mode, then `:root`.
+ */
+export function collectVars(sheets: Stylesheet[]): ThemeVars {
+  const declared: { scope: Scope; prop: string; def: VarDef }[] = [];
+  const scopes = new Map<string, Scope>();
   for (const sheet of sheets) {
     const root = parseSheet(sheet);
     root?.walkDecls(/^--/, (decl) => {
-      const theme = themeOf(decl);
-      if (!theme) return;
-      if (!vars.has(theme)) vars.set(theme, new Map());
-      vars.get(theme)!.set(decl.prop, { value: decl.value, file: sheet.file, line: lineOf(decl, sheet) });
+      for (const scope of scopesOf(decl)) {
+        scopes.set(scopeKey(scope), scopes.get(scopeKey(scope)) ?? scope);
+        declared.push({ scope, prop: decl.prop, def: { value: decl.value, file: sheet.file, line: lineOf(decl, sheet) } });
+      }
     });
   }
-  if (!vars.has('default')) vars.set('default', new Map());
+  if (!scopes.has('default')) scopes.set('default', {});
+  const vars: ThemeVars = new Map();
+  for (const [key, { theme, mode }] of scopes) {
+    const layers = new Set(['default', scopeKey({ mode }), scopeKey({ theme }), key]);
+    const resolved = new Map<string, VarDef>();
+    for (const layer of layers) for (const d of declared) if (scopeKey(d.scope) === layer) resolved.set(d.prop, d.def);
+    vars.set(key, resolved);
+  }
   return vars;
 }
 
