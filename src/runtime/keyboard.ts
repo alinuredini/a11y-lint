@@ -102,9 +102,9 @@ export async function keyboardWalk(page: Page, url: string, maxStops: number): P
 async function escapeReleases(page: Page, cycle: JSHandle<(HTMLElement | null)[]>): Promise<boolean> {
   const present = await page.evaluate(([first]) => {
     first?.focus();
-    return !!first && document.activeElement === first;
+    return !!first?.isConnected;
   }, cycle);
-  if (!present) return true; // already gone
+  if (!present) return true; // the container already closed
   await page.keyboard.press('Escape');
   return page
     .waitForFunction(
