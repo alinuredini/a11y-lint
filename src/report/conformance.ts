@@ -123,6 +123,20 @@ const STATE_LABEL: Record<CriterionState, string> = {
   'likely-na': '➖ Likely not applicable',
 };
 
+/**
+ * Makes message text safe for Markdown and MDX: element names such as `<input>` become code spans
+ * instead of being swallowed as HTML. Text that is already in a code span is left alone.
+ */
+function mdText(text: string): string {
+  return text
+    .split(/(`[^`\n]*`)/)
+    .map((part) => (part.startsWith('`') ? part : part.replace(/<\/?[A-Za-z][^<>\n`]*>/g, '`$&`')))
+    .join('')
+    .split(/(`[^`\n]*`)/)
+    .map((part) => (part.startsWith('`') ? part : part.replace(/[<{]/g, '\\$&')))
+    .join('');
+}
+
 export function renderMarkdown(input: ConformanceInput, results: CriterionResult[]): string {
   const count = (s: CriterionState) => results.filter((r) => r.state === s).length;
   const lines: string[] = [
@@ -148,12 +162,12 @@ export function renderMarkdown(input: ConformanceInput, results: CriterionResult
   };
   const heading = (r: CriterionResult) => `[${r.criterion.id} ${r.criterion.title}](${understandingUrl(r.criterion)}) (${r.criterion.level})`;
   const findingLines = (r: CriterionResult) =>
-    r.findings.slice(0, 50).map((f) => `- \`${f.file}${f.source === 'runtime' ? '' : `:${f.line}`}\` ${f.message}`).concat(r.findings.length > 50 ? [`- …and ${r.findings.length - 50} more`] : []);
+    r.findings.slice(0, 50).map((f) => `- \`${f.file}${f.source === 'runtime' ? '' : `:${f.line}`}\` ${mdText(f.message)}`).concat(r.findings.length > 50 ? [`- …and ${r.findings.length - 50} more`] : []);
 
   section('Failures', 'fail', (r) => [`### ${heading(r)}`, '', ...findingLines(r), '']);
   section('Needs review', 'review', (r) => [`### ${heading(r)}`, '', ...findingLines(r), '']);
-  section('Manual checklist', 'manual', (r) => [`- [ ] ${heading(r)}: ${GUIDANCE[r.criterion.id] ?? 'Review against the Understanding document.'}${r.note ? ` ${r.note}` : ''}`]);
+  section('Manual checklist', 'manual', (r) => [`- [ ] ${heading(r)}: ${GUIDANCE[r.criterion.id] ?? 'Review against the Understanding document.'}${r.note ? ` ${mdText(r.note)}` : ''}`]);
   section('Automated checks passed (still verify manually)', 'auto-pass', (r) => [`- [ ] ${heading(r)}${GUIDANCE[r.criterion.id] ? `: ${GUIDANCE[r.criterion.id]}` : ''}`]);
-  section('Likely not applicable', 'likely-na', (r) => [`- ${heading(r)}: ${r.note}`]);
+  section('Likely not applicable', 'likely-na', (r) => [`- ${heading(r)}: ${mdText(r.note ?? '')}`]);
   return lines.join('\n');
 }
