@@ -99,7 +99,8 @@ export function evaluate(input: ConformanceInput): CriterionResult[] {
     let state: CriterionState;
     let note: string | undefined;
     const group = NA_GROUPS[criterion.id];
-    const applies = group ? APPLIES_WHEN[group].some((tag) => input.evidence.has(tag)) : true;
+    // Without scanned source there is no evidence either way, so nothing is ruled out.
+    const applies = group && input.filesScanned > 0 ? APPLIES_WHEN[group].some((tag) => input.evidence.has(tag)) : true;
     if (findings.some((f) => f.status === 'fail')) state = 'fail';
     else if (findings.length) state = 'review';
     else if (!applies) {
@@ -107,7 +108,7 @@ export function evaluate(input: ConformanceInput): CriterionResult[] {
       note = `No ${APPLIES_WHEN[group!].map((t) => `<${t}>`).join('/')} found in the scanned source.`;
     } else if (input.covered.has(criterion.id)) state = 'auto-pass';
     else state = 'manual';
-    if (group && applies) {
+    if (group && applies && input.filesScanned > 0) {
       const files = APPLIES_WHEN[group].flatMap((t) => [...(input.evidence.get(t) ?? [])]);
       note = `Found in ${[...new Set(files)].slice(0, 5).join(', ')}${files.length > 5 ? ', …' : ''}.`;
     }

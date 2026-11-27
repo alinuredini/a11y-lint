@@ -21,6 +21,8 @@ Options
   --url <url>               Scan a rendered page with Playwright + axe (repeatable)
   --storybook <dir>         Scan every story in a built Storybook
   --runtime                 Run the runtime scan with urls from the config file
+  --runtime-only            Skip the static and contrast checks; report on the runtime scan alone
+  --concurrency <n>         Pages the runtime scan loads at the same time (default: 1)
   --fail-on <fail|review|never>  When to exit with code 1 (default: fail)
   --init                    Write a starter ${CONFIG_FILE}
   -v, --version
@@ -39,6 +41,8 @@ async function main(): Promise<number> {
       url: { type: 'string', multiple: true },
       storybook: { type: 'string' },
       runtime: { type: 'boolean' },
+      'runtime-only': { type: 'boolean' },
+      concurrency: { type: 'string' },
       'fail-on': { type: 'string', default: 'fail' },
       init: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
@@ -70,9 +74,16 @@ async function main(): Promise<number> {
   }
   if (values.url) config.runtime.urls.push(...values.url);
   if (values.storybook) config.runtime.storybook = values.storybook;
-  const runtime = Boolean(values.runtime || values.url || values.storybook);
+  if (values.concurrency) {
+    const n = Number(values.concurrency);
+    if (!Number.isInteger(n) || n < 1) throw new Error('--concurrency must be a whole number of 1 or more');
+    config.runtime.concurrency = n;
+  }
+  const runtimeOnly = Boolean(values['runtime-only']);
+  const runtime = Boolean(values.runtime || values.url || values.storybook || runtimeOnly);
+  if (runtimeOnly && !config.runtime.urls.length && !config.runtime.storybook) throw new Error('--runtime-only needs --url, --storybook or runtime.urls in the config');
 
-  const result = await run(cwd, config, { paths: positionals, runtime });
+  const result = await run(cwd, config, { paths: positionals, runtime, static: !runtimeOnly });
   for (const e of result.parseErrors) console.error(`Could not parse ${e.file}: ${e.message}`);
 
   const body =
