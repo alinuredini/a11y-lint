@@ -169,7 +169,11 @@ describe('component parameter defaults', () => {
     // A default only known at runtime is treated like `{label}`: unknown text, never a failure.
     expect(usage('{ href, children = t("skip") }')).toEqual([]);
     expect(usage('{ href, children = label }')).toEqual([]);
-    expect(usage('{ href, children = <Icon /> }')).toEqual([]);
+    // An element default is checked as that element: an icon alone needs review, like any icon-only link.
+    expect(usage('{ href, children = <Icon /> }')).toEqual(['unknown link-name']);
+    expect(usage('{ href, children = <img src="a.png" alt="Home" /> }')).toEqual([]);
+    // The default's own <img> is also linted where it is written, so image-alt appears for both.
+    expect(new Set(usage('{ href, children = <img src="a.png" /> }'))).toEqual(new Set(['fail image-alt', 'fail link-name']));
     // No default, or an empty one: still nothing to name the link.
     expect(usage('{ href, children }')).toEqual(['fail link-name']);
     expect(usage(`{ href, children = '' }`)).toEqual(['fail link-name']);

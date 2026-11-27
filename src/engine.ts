@@ -3,7 +3,7 @@ import { relative } from 'node:path';
 import { glob } from 'tinyglobby';
 import { adapterFor } from './adapters/index.js';
 import type { Config } from './config.js';
-import { DYNAMIC, walk, type ComponentDef, type IRDocument, type IRElement } from './ir.js';
+import { appendChild, DYNAMIC, walk, type ComponentDef, type IRDocument, type IRElement } from './ir.js';
 import { ImportResolver } from './resolve.js';
 import { rules } from './rules/index.js';
 import type { Finding, RuleContext } from './types.js';
@@ -79,7 +79,7 @@ export async function lintStatic(cwd: string, config: Config, paths: string[] = 
 function inline(el: IRElement, def: ComponentDef): void {
   el.tag = def.tag;
   el.isComponent = false;
-  if (def.childrenDefault && !el.children.length && !el.attrs.has('children')) el.children.push({ ...def.childrenDefault });
+  if (def.childrenDefault && !el.children.length && !el.attrs.has('children')) appendChild(el, structuredClone(def.childrenDefault));
   if (!def.forwardsProps) {
     el.attrs = new Map();
     el.events = new Set();
